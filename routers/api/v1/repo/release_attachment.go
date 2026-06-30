@@ -218,7 +218,9 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 	// Get uploaded file from request
 	var filename string
 	var uploaderFile *attachment_service.UploaderFile
-	if strings.HasPrefix(strings.ToLower(ctx.Req.Header.Get("Content-Type")), "multipart/form-data") {
+
+	switch bodyContentType := strings.ToLower(ctx.Req.Header.Get("Content-Type")); {
+	case strings.HasPrefix(bodyContentType, "multipart/form-data"):
 		file, header, err := ctx.Req.FormFile("attachment")
 		if err != nil {
 			ctx.APIErrorInternal(err)
@@ -231,7 +233,10 @@ func CreateReleaseAttachment(ctx *context.APIContext) {
 			filename = name
 		}
 		uploaderFile = attachment_service.NewLimitedUploaderKnownSize(file, header.Size)
-	} else {
+	case strings.HasPrefix(bodyContentType, "application/octet-stream"):
+		filename = ctx.Req.URL.Query().Get("name")
+		uploaderFile = attachment_service.NewLimitedUploaderMaxBytesReader(ctx.Req.Body, ctx.Resp)
+	default:
 		filename = ctx.FormString("name")
 		uploaderFile = attachment_service.NewLimitedUploaderMaxBytesReader(ctx.Req.Body, ctx.Resp)
 	}
