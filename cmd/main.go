@@ -77,6 +77,7 @@ func prepareWorkPathAndCustomConf(cmd *cli.Command) {
 		args.CustomConf = cmd.String("config")
 	}
 	setting.InitWorkPathAndCommonConfig(os.Getenv, args)
+	setting.EnvironmentToConfig(setting.CfgProvider, os.Environ()) // Add config from env
 }
 
 type AppVersion struct {
