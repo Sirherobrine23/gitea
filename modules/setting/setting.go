@@ -158,6 +158,7 @@ func loadCommonSettingsFrom(cfg ConfigProvider) error {
 	loadMarkupFrom(cfg)
 	loadRedisFrom(cfg)
 	loadGlobalLockFrom(cfg)
+	loadBlockConfig(cfg)
 	loadOtherFrom(cfg)
 	return nil
 }
