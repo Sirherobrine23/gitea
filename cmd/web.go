@@ -337,6 +337,20 @@ func listen(m http.Handler, handleRedirector bool) error {
 		log.Info("LFS server enabled")
 	}
 
+	// Start block process
+	go setting.ProcessBlockConfig()
+
+	originalHandle := m
+	m = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if setting.IsBlock(r) {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write(nil)
+			return
+		}
+
+		originalHandle.ServeHTTP(w, r)
+	})
+
 	var err error
 	switch setting.Protocol {
 	case setting.HTTP:
