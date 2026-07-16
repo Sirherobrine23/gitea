@@ -29,7 +29,7 @@ export function initCompReactionSelector() {
       commentContainer.insertAdjacentHTML('beforeend', data.html);
     }
 
-    // Ask the page-owned socket to reconcile immediately. Other sessions are
+    // Ask the live update socket to reconcile immediately. Other sessions are
     // invalidated by the server-side issue live hub.
     document.dispatchEvent(new CustomEvent(issueLiveRefreshEvent));
   });

@@ -20,17 +20,19 @@ func TestIssueLiveParseSnapshot(t *testing.T) {
 	<div class="timeline-item event">unkeyed event</div>
 </div>`)
 	require.NoError(t, err)
-	require.Len(t, entries, 4)
+	require.Len(t, entries, 5)
 
 	assert.Equal(t, "issue-4", entries[0].Key)
 	assert.Equal(t, "issuecomment-10", entries[1].Key)
 	assert.Equal(t, "issuecomment-10:commits", entries[2].Key)
 	assert.Equal(t, "issuecomment-11", entries[3].Key)
+	assert.Equal(t, "unkeyed:0", entries[4].Key)
 
 	assert.Equal(t, entries[1].Key, entries[0].BeforeKey)
 	assert.Equal(t, entries[2].Key, entries[1].BeforeKey)
 	assert.Equal(t, entries[3].Key, entries[2].BeforeKey)
-	assert.Empty(t, entries[3].BeforeKey)
+	assert.Equal(t, entries[4].Key, entries[3].BeforeKey)
+	assert.Empty(t, entries[4].BeforeKey)
 }
 
 func TestIssueLiveParseSnapshotRejectsDuplicateKeys(t *testing.T) {
