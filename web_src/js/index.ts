@@ -21,6 +21,7 @@ import {initMarkupContent} from './markup/content.ts';
 import {initRepoFileView} from './features/file-view.ts';
 import {initUserExternalLogins, initUserCheckAppUrl} from './features/user-auth.ts';
 import {initRepoPullRequestReview, initRepoIssueFilterItemLabel} from './features/repo-issue.ts';
+import {initRepoIssueLive} from './features/repo-issue-live.ts';
 import {initRepoEllipsisButton, initCommitStatuses, initAvatarStackPopup, initCommitFileHistoryFollowRename} from './features/repo-commit.ts';
 import {initRepoTopicBar} from './features/repo-home.ts';
 import {initAdminCommon} from './features/admin/common.ts';
@@ -129,6 +130,7 @@ const initPerformanceTracer = callInitFunctions([
   initRepoIssueContentHistory,
   initRepoIssueList,
   initRepoIssueFilterItemLabel,
+  initRepoIssueLive,
   initRepoMigration,
   initRepoMigrationStatusChecker,
   initRepoProjectsView,
