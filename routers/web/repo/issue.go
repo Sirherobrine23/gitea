@@ -295,6 +295,7 @@ func UpdateIssueTitle(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(issue)
 	ctx.JSON(http.StatusOK, map[string]any{
 		"title": issue.Title,
 	})
@@ -319,6 +320,7 @@ func UpdateIssueRef(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(issue)
 	ctx.JSON(http.StatusOK, map[string]any{
 		"ref": ref,
 	})
@@ -368,6 +370,7 @@ func UpdateIssueContent(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(issue)
 	ctx.JSON(http.StatusOK, map[string]any{
 		"content":        commentContentHTML(ctx, content),
 		"contentVersion": issue.ContentVersion,
@@ -398,6 +401,7 @@ func UpdateIssueDeadline(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(issue)
 	ctx.JSONRedirect("")
 }
 
@@ -431,6 +435,7 @@ func UpdateIssueMilestone(ctx *context.Context) {
 		}
 	}
 
+	notifyIssueLiveIssues(issues)
 	ctx.JSONOK()
 }
 
@@ -475,6 +480,7 @@ func UpdateIssueAssignee(ctx *context.Context) {
 			}
 		}
 	}
+	notifyIssueLiveIssues(issues)
 	ctx.JSONOK()
 }
 
@@ -552,6 +558,7 @@ func ChangeIssueReaction(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(issue)
 	if len(issue.Reactions) == 0 {
 		ctx.JSON(http.StatusOK, map[string]any{
 			"empty": true,

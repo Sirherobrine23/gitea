@@ -226,5 +226,6 @@ func UpdateIssueLabel(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssues(issues)
 	ctx.JSONOK()
 }

@@ -183,6 +183,7 @@ func NewComment(ctx *context.Context) {
 		}
 	} // end if: handle close or reopen
 
+	notifyIssueLiveIssue(issue)
 	ctx.JSONRedirect(redirect)
 }
 
@@ -263,6 +264,7 @@ func UpdateCommentContent(ctx *context.Context) {
 		}
 	}
 
+	notifyIssueLiveIssue(comment.Issue)
 	ctx.JSON(http.StatusOK, map[string]any{
 		"content":        commentContentHTML(ctx, renderedContent),
 		"contentVersion": comment.ContentVersion,
@@ -301,6 +303,7 @@ func DeleteComment(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(comment.Issue)
 	ctx.Status(http.StatusOK)
 }
 
@@ -389,6 +392,7 @@ func ChangeCommentReaction(ctx *context.Context) {
 		return
 	}
 
+	notifyIssueLiveIssue(comment.Issue)
 	if len(comment.Reactions) == 0 {
 		ctx.JSON(http.StatusOK, map[string]any{
 			"empty": true,
