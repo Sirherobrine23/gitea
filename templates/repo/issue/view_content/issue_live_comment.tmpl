@@ -1,0 +1,8 @@
+<div id="{{.Issue.HashTag}}" class="timeline-item comment issue-content-comment">
+	<div class="content comment-container">
+		{{$reactions := .Issue.Reactions.GroupByType}}
+		{{if $reactions}}
+			{{template "repo/issue/view_content/reactions" dict "ActionURL" (printf "%s/issues/%d/reactions" $.RepoLink .Issue.Index) "Reactions" $reactions}}
+		{{end}}
+	</div>
+</div>

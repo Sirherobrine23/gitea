@@ -22,6 +22,11 @@ import (
 
 // GetContentHistoryOverview get overview
 func GetContentHistoryOverview(ctx *context.Context) {
+	if isIssueLiveWebSocketRequest(ctx.Req) {
+		IssueLive(ctx)
+		return
+	}
+
 	issue := GetActionIssue(ctx)
 	if ctx.Written() {
 		return
