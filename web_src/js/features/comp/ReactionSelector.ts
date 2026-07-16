@@ -1,6 +1,8 @@
 import {POST} from '../../modules/fetch.ts';
 import {registerGlobalEventFunc} from '../../modules/observer.ts';
 
+export const issueLiveRefreshEvent = 'gitea:issue-live-refresh';
+
 export function initCompReactionSelector() {
   registerGlobalEventFunc('click', 'onCommentReactionButtonClick', async (target: HTMLElement, e: Event) => {
     // there are 2 places for the "reaction" buttons, one is the top-right reaction menu, one is the bottom of the comment
@@ -26,5 +28,9 @@ export function initCompReactionSelector() {
     if (data.html) {
       commentContainer.insertAdjacentHTML('beforeend', data.html);
     }
+
+    // Ask the page-owned socket to reconcile immediately. Other sessions are
+    // invalidated by the server-side issue live hub.
+    document.dispatchEvent(new CustomEvent(issueLiveRefreshEvent));
   });
 }
