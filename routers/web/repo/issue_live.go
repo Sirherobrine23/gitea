@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -92,6 +93,11 @@ type issueLiveSnapshotEntry struct {
 type issueLiveSnapshotState struct {
 	BeforeKey string
 	Hash      [sha256.Size]byte
+}
+
+func isIssueLiveWebSocketRequest(req *http.Request) bool {
+	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket") &&
+		strings.Contains(strings.ToLower(req.Header.Get("Connection")), "upgrade")
 }
 
 func prepareIssueLiveSnapshot(ctx *context.Context) (string, error) {
@@ -322,6 +328,7 @@ func issueLiveParseSnapshot(rendered string) ([]issueLiveSnapshotEntry, error) {
 	entries := make([]issueLiveSnapshotEntry, 0, 16)
 	seen := make(map[string]struct{})
 	previousCommentKey := ""
+	unkeyedIndex := 0
 	for node := snapshot.FirstChild; node != nil; node = node.NextSibling {
 		if node.Type != nethtml.ElementNode {
 			continue
@@ -332,6 +339,9 @@ func issueLiveParseSnapshot(rendered string) ([]issueLiveSnapshotEntry, error) {
 			previousCommentKey = key
 		} else if previousCommentKey != "" && issueLiveNodeHasClass(node, "timeline-item") && issueLiveNodeHasClass(node, "commits-list") {
 			key = previousCommentKey + ":commits"
+		} else if issueLiveNodeHasClass(node, "timeline-item") || issueLiveNodeHasClass(node, "timeline-item-group") {
+			key = fmt.Sprintf("unkeyed:%d", unkeyedIndex)
+			unkeyedIndex++
 		}
 		if key == "" {
 			continue
