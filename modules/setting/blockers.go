@@ -9,6 +9,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -30,6 +31,7 @@ const (
 )
 
 var (
+	glbBlockMu   sync.RWMutex
 	glbRegex     = map[*regexp.Regexp]struct{}{}
 	glbPrefix    = map[netip.Prefix]struct{}{}
 	BlockConfigs = [2]*BlockerConfig{}
@@ -37,6 +39,9 @@ var (
 
 func ProcessBlockConfig() {
 	for {
+		nextRegex := make(map[*regexp.Regexp]struct{})
+		nextPrefix := make(map[netip.Prefix]struct{})
+
 		log.Info("Updating Block configs")
 		for _, BlockConfig := range BlockConfigs {
 			if BlockConfig == nil {
@@ -48,7 +53,7 @@ func ProcessBlockConfig() {
 					if err != nil {
 						stdlog.Fatalf("error parse CIDR in %d %q, err: %s", index, raw, err)
 					}
-					glbPrefix[prefix] = struct{}{}
+					nextPrefix[prefix] = struct{}{}
 					log.Debug("CIDR for block: %s", prefix.String())
 				}
 			}
@@ -68,7 +73,7 @@ func ProcessBlockConfig() {
 							}
 
 							for _, prefix := range cidrs {
-								glbPrefix[prefix] = struct{}{}
+								nextPrefix[prefix] = struct{}{}
 								log.Debug("CIDR for %q: %s", query, prefix.String())
 							}
 							continue
@@ -81,7 +86,7 @@ func ProcessBlockConfig() {
 							}
 
 							for _, prefix := range cidrs {
-								glbPrefix[prefix] = struct{}{}
+								nextPrefix[prefix] = struct{}{}
 								log.Debug("CIDR for %q: %s", query, prefix.String())
 							}
 							continue
@@ -95,7 +100,7 @@ func ProcessBlockConfig() {
 							for p := range strings.FieldsFuncSeq(response.Body, isAddr) {
 								if p != "" {
 									if cidr, err := netip.ParsePrefix(p); err == nil && cidr.IsValid() {
-										glbPrefix[cidr] = struct{}{}
+										nextPrefix[cidr] = struct{}{}
 										log.Debug("CIDR for %q: %s", query, cidr.String())
 									}
 								}
@@ -109,7 +114,7 @@ func ProcessBlockConfig() {
 									for p := range strings.FieldsFuncSeq(routev4, isAddr) {
 										if p != "" {
 											if cidr, err := netip.ParsePrefix(p); err == nil && cidr.IsValid() {
-												glbPrefix[cidr] = struct{}{}
+												nextPrefix[cidr] = struct{}{}
 												log.Debug("CIDR for %q: %s", query, cidr.String())
 											}
 										}
@@ -119,7 +124,7 @@ func ProcessBlockConfig() {
 									for p := range strings.FieldsFuncSeq(routev6, isAddr) {
 										if p != "" {
 											if cidr, err := netip.ParsePrefix(p); err == nil && cidr.IsValid() {
-												glbPrefix[cidr] = struct{}{}
+												nextPrefix[cidr] = struct{}{}
 												log.Debug("CIDR for %q: %s", query, cidr.String())
 											}
 										}
@@ -139,10 +144,18 @@ func ProcessBlockConfig() {
 					if err != nil {
 						stdlog.Fatalf("error on test header regex in %d: %q", index, h)
 					}
-					glbRegex[rg] = struct{}{}
+					nextRegex[rg] = struct{}{}
 				}
 			}
 		}
+
+		// Publish a complete immutable snapshot. Readers only hold the lock
+		// while checking a request, and the slow RDAP/WHOIS refresh never blocks
+		// HTTP handlers.
+		glbBlockMu.Lock()
+		glbRegex = nextRegex
+		glbPrefix = nextPrefix
+		glbBlockMu.Unlock()
 
 		blockNextUpdate := time.Now().Add(time.Hour * 2)
 		log.Info("Next update %s, until %s", blockNextUpdate, time.Until(blockNextUpdate))
@@ -173,6 +186,9 @@ func IsBlock(r *http.Request) bool {
 	if userAgent == "" { // Always block without user-agent header
 		return true
 	}
+
+	glbBlockMu.RLock()
+	defer glbBlockMu.RUnlock()
 
 	if addr := r.Header.Get("X-Real-IP"); addr != "" {
 		if addrIP, err := netip.ParseAddrPort(addr); err == nil {
