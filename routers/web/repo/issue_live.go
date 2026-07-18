@@ -536,8 +536,18 @@ func IssueLive(ctx *context.Context) {
 	defer cancel()
 	stopShutdownCancel := stdcontext.AfterFunc(graceful.GetManager().ShutdownContext(), cancel)
 	defer stopShutdownCancel()
-	ctx.Base.RequestContext = reqctx.FromContext(connectionCtx)
-	ctx.Req = ctx.Req.WithContext(connectionCtx)
+
+	// Never replace RequestContext on the original web context. The request
+	// context has the original Base in its parent chain; replacing it in place
+	// makes Value calls recurse through Base -> requestContext -> Base until the
+	// goroutine stack overflows. Use an isolated shallow copy for this long-lived
+	// WebSocket request instead.
+	liveBase := *ctx.Base
+	liveBase.RequestContext = reqctx.FromContext(connectionCtx)
+	liveBase.Req = ctx.Req.WithContext(connectionCtx)
+	liveCtx := *ctx
+	liveCtx.Base = &liveBase
+	ctx = &liveCtx
 
 	refresh := make(chan struct{}, 1)
 	unregisterRefresh := registerIssueLiveRefresh(ctx.Repo.Repository.ID, ctx.PathParamInt64("index"), refresh)
