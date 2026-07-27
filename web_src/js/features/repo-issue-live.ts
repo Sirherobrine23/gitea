@@ -35,7 +35,7 @@ type MorphOptionsWithCallbacks = {
 
 function issueLiveUrl() {
   const path = window.location.pathname.replace(/\/+$/, '');
-  const url = new URL(`${path}/content-history/overview`, window.location.origin);
+  const url = new URL(`${path}/live`, window.location.origin);
   url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.href;
 }
@@ -155,7 +155,7 @@ function currentResumeMessage(): IssueLiveClientMessage {
   return {
     type: 'resume',
     initialized: synchronizedBaseline,
-    states: synchronizedBaseline ? synchronizedStates.values().toArray() : initialResumeStates(),
+    states: synchronizedBaseline ? [...synchronizedStates.values()] : initialResumeStates(),
   };
 }
 
@@ -330,7 +330,6 @@ function applyTimelineOperations(operations: IssueLiveOperation[]) {
 function applyPendingBaseline() {
   if (!pendingBaselineStates || operationFrame !== null || operationBatches.length) return;
 
-  synchronizedStates.clear();
   for (const state of pendingBaselineStates) synchronizedStates.set(state.key, state);
   pendingBaselineStates = null;
   synchronizedBaseline = true;

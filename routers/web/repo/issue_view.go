@@ -1090,18 +1090,25 @@ func (prInfo *pullRequestViewInfo) prepareMergeBoxProtectedRules(ctx *context.Co
 	}
 }
 
-func prepareIssueViewContent(ctx *context.Context, issue *issues_model.Issue) {
-	var err error
+func prepareIssueViewContentData(ctx *context.Context, issue *issues_model.Issue) error {
 	rctx := renderhelper.NewRenderContextRepoComment(ctx, ctx.Repo.Repository, renderhelper.RepoCommentOptions{
 		FootnoteContextID: "0", // Set footnote context ID to 0 for the issue content
 	})
-	issue.RenderedContent, err = markdown.RenderString(rctx, issue.Content)
+	renderedContent, err := markdown.RenderString(rctx, issue.Content)
 	if err != nil {
-		ctx.ServerError("RenderString", err)
-		return
+		return fmt.Errorf("render issue content: %w", err)
 	}
-	if issue.ShowRole, err = roleDescriptor(ctx, issue.Repo, issue.Poster, nil, issue, issue.HasOriginalAuthor()); err != nil {
-		ctx.ServerError("roleDescriptor", err)
-		return
+	showRole, err := roleDescriptor(ctx, issue.Repo, issue.Poster, nil, issue, issue.HasOriginalAuthor())
+	if err != nil {
+		return fmt.Errorf("resolve issue poster role: %w", err)
+	}
+	issue.RenderedContent = renderedContent
+	issue.ShowRole = showRole
+	return nil
+}
+
+func prepareIssueViewContent(ctx *context.Context, issue *issues_model.Issue) {
+	if err := prepareIssueViewContentData(ctx, issue); err != nil {
+		ctx.ServerError("prepareIssueViewContent", err)
 	}
 }

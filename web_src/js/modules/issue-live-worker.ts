@@ -35,7 +35,7 @@ export class IssueLiveSharedWorker {
 
   constructor(url: string, resume: IssueLiveClientMessage) {
     this.sharedWorker = new SharedWorker(
-      new URL('../websocket.sharedworker.ts', import.meta.url),
+      new URL('../issue-live.sharedworker.ts', import.meta.url),
       {name: 'issue-live-websocket', type: 'module'},
     );
 

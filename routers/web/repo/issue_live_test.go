@@ -5,6 +5,9 @@ package repo
 
 import (
 	"testing"
+	"time"
+
+	"gitea.dev/services/pubsub"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,6 +102,54 @@ func TestIssueLiveDiffSnapshotDetectsReorder(t *testing.T) {
 	assert.Equal(t, "issuecomment-10", operations[0].BeforeKey)
 	assert.Equal(t, "issuecomment-10", operations[1].Key)
 	assert.Empty(t, operations[1].BeforeKey)
+}
+
+func TestIssueLiveDiffSnapshotKeepsIssueDescription(t *testing.T) {
+	initial, err := issueLiveParseSnapshot(`
+<div data-issue-live-snapshot>
+	<div class="timeline-item comment issue-content-comment" id="issue-4">
+		<div class="comment-body">old description</div>
+	</div>
+</div>`)
+	require.NoError(t, err)
+
+	updated, err := issueLiveParseSnapshot(`
+<div data-issue-live-snapshot>
+	<div class="timeline-item comment issue-content-comment" id="issue-4">
+		<div class="comment-body">new description</div>
+	</div>
+</div>`)
+	require.NoError(t, err)
+
+	operations, current := issueLiveDiffSnapshot(issueLiveSnapshotStates(initial), updated)
+	require.Len(t, operations, 1)
+	assert.Equal(t, "upsert", operations[0].Action)
+	assert.Equal(t, "issue-4", operations[0].Key)
+	assert.Contains(t, operations[0].HTML, "new description")
+	assert.Contains(t, current, "issue-4")
+}
+
+func TestIssueLiveRefreshUsesPubsubBroker(t *testing.T) {
+	previousBroker := pubsub.DefaultBroker
+	pubsub.DefaultBroker = pubsub.NewMemoryBroker()
+	t.Cleanup(func() { pubsub.DefaultBroker = previousBroker })
+
+	refresh, cancel := registerIssueLiveRefresh(10, 20)
+	t.Cleanup(cancel)
+
+	notifyIssueLive(10, 20)
+	select {
+	case <-refresh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for issue live pub/sub invalidation")
+	}
+
+	notifyIssueLive(10, 21)
+	select {
+	case <-refresh:
+		t.Fatal("received invalidation for a different issue topic")
+	case <-time.After(20 * time.Millisecond):
+	}
 }
 
 func TestIssueLiveClientStateRoundTrip(t *testing.T) {

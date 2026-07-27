@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -95,11 +94,6 @@ type issueLiveSnapshotState struct {
 	Hash      [sha256.Size]byte
 }
 
-func isIssueLiveWebSocketRequest(req *http.Request) bool {
-	return strings.EqualFold(req.Header.Get("Upgrade"), "websocket") &&
-		strings.Contains(strings.ToLower(req.Header.Get("Connection")), "upgrade")
-}
-
 func prepareIssueLiveSnapshot(ctx *context.Context) (string, error) {
 	issue, err := issues_model.GetIssueByIndex(ctx, ctx.Repo.Repository.ID, ctx.PathParamInt64("index"))
 	if err != nil {
@@ -136,6 +130,12 @@ func prepareIssueLiveSnapshot(ctx *context.Context) (string, error) {
 		return "", err
 	}
 	if err := filterXRefComments(ctx, issue); err != nil {
+		return "", err
+	}
+	// The issue/PR description is the first timeline entry. It must be prepared
+	// exactly like the regular issue view before rendering the live snapshot;
+	// otherwise the first refresh replaces it with an empty body.
+	if err := prepareIssueViewContentData(ctx, issue); err != nil {
 		return "", err
 	}
 
@@ -549,9 +549,9 @@ func IssueLive(ctx *context.Context) {
 	liveCtx.Base = &liveBase
 	ctx = &liveCtx
 
-	refresh := make(chan struct{}, 1)
-	unregisterRefresh := registerIssueLiveRefresh(ctx.Repo.Repository.ID, ctx.PathParamInt64("index"), refresh)
+	brokerRefresh, unregisterRefresh := registerIssueLiveRefresh(ctx.Repo.Repository.ID, ctx.PathParamInt64("index"))
 	defer unregisterRefresh()
+	clientRefresh := make(chan struct{}, 1)
 
 	initialHTML, err := prepareIssueLiveSnapshot(ctx)
 	if err != nil {
@@ -629,7 +629,7 @@ func IssueLive(ctx *context.Context) {
 		}
 	}
 
-	go issueLiveReadLoop(connectionCtx, cancel, conn, refresh)
+	go issueLiveReadLoop(connectionCtx, cancel, conn, clientRefresh)
 
 	refreshTicker := time.NewTicker(issueLiveSafetyRefreshInterval)
 	defer refreshTicker.Stop()
@@ -660,11 +660,31 @@ func IssueLive(ctx *context.Context) {
 		case <-connectionCtx.Done():
 			return
 		case <-refreshTicker.C:
-		case <-refresh:
-			// Collapse a burst of local changes into one template render.
+		case _, ok := <-brokerRefresh:
+			if !ok {
+				return
+			}
+			// Collapse a burst of pub/sub invalidations and explicit client
+			// refreshes into one template render.
 			for {
 				select {
-				case <-refresh:
+				case _, ok := <-brokerRefresh:
+					if !ok {
+						return
+					}
+				case <-clientRefresh:
+				default:
+					goto refreshTimeline
+				}
+			}
+		case <-clientRefresh:
+			for {
+				select {
+				case _, ok := <-brokerRefresh:
+					if !ok {
+						return
+					}
+				case <-clientRefresh:
 				default:
 					goto refreshTimeline
 				}
