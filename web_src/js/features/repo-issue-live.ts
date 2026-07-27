@@ -35,7 +35,7 @@ type MorphOptionsWithCallbacks = {
 
 function issueLiveUrl() {
   const path = window.location.pathname.replace(/\/+$/, '');
-  const url = new URL(`${path}/content-history/overview`, window.location.origin);
+  const url = new URL(`${path}/live`, window.location.origin);
   url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return url.href;
 }

@@ -4,58 +4,22 @@
 package repo
 
 import (
-	"sync"
+	"fmt"
 
 	issues_model "gitea.dev/models/issues"
+	"gitea.dev/services/pubsub"
 )
 
-type issueLiveTopic struct {
-	repoID int64
-	index  int64
+func issueLiveTopic(repoID, index int64) string {
+	return fmt.Sprintf("issue-live-%d-%d", repoID, index)
 }
 
-var issueLiveRefreshHub = struct {
-	sync.RWMutex
-	subscribers map[issueLiveTopic]map[chan struct{}]struct{}
-}{
-	subscribers: make(map[issueLiveTopic]map[chan struct{}]struct{}),
-}
-
-func registerIssueLiveRefresh(repoID, index int64, refresh chan struct{}) func() {
-	topic := issueLiveTopic{repoID: repoID, index: index}
-
-	issueLiveRefreshHub.Lock()
-	subscribers := issueLiveRefreshHub.subscribers[topic]
-	if subscribers == nil {
-		subscribers = make(map[chan struct{}]struct{})
-		issueLiveRefreshHub.subscribers[topic] = subscribers
-	}
-	subscribers[refresh] = struct{}{}
-	issueLiveRefreshHub.Unlock()
-
-	return func() {
-		issueLiveRefreshHub.Lock()
-		if subscribers := issueLiveRefreshHub.subscribers[topic]; subscribers != nil {
-			delete(subscribers, refresh)
-			if len(subscribers) == 0 {
-				delete(issueLiveRefreshHub.subscribers, topic)
-			}
-		}
-		issueLiveRefreshHub.Unlock()
-	}
+func registerIssueLiveRefresh(repoID, index int64) (<-chan []byte, func()) {
+	return pubsub.DefaultBroker.Subscribe(issueLiveTopic(repoID, index))
 }
 
 func notifyIssueLive(repoID, index int64) {
-	topic := issueLiveTopic{repoID: repoID, index: index}
-
-	issueLiveRefreshHub.RLock()
-	defer issueLiveRefreshHub.RUnlock()
-	for refresh := range issueLiveRefreshHub.subscribers[topic] {
-		select {
-		case refresh <- struct{}{}:
-		default:
-		}
-	}
+	pubsub.DefaultBroker.Publish(issueLiveTopic(repoID, index), []byte{1})
 }
 
 func notifyIssueLiveIssue(issue *issues_model.Issue) {
