@@ -16,12 +16,18 @@ type IssueLiveClientMessage = {
 };
 
 type WorkerCommand = {
-  type: 'start' | 'refresh' | 'status' | 'close' | 'resume',
+  type: 'start' | 'refresh' | 'status' | 'close' | 'resume' | 'check',
   url?: string,
   resume?: IssueLiveClientMessage,
 };
 
 type ConnectionState = 'connecting' | 'open' | 'closed' | 'error';
+
+const reconnectInitialDelay = 1000;
+const reconnectMaxDelay = 10000;
+const connectTimeout = 10000;
+const heartbeatInterval = 15000;
+const heartbeatTimeout = 10000;
 
 function normalizeResumeMessage(message?: IssueLiveClientMessage): IssueLiveClientMessage {
   if (message?.type !== 'resume' || !Array.isArray(message.states)) {
@@ -35,7 +41,10 @@ class SocketSource {
   socket: WebSocket | null = null;
   clients = new Set<MessagePort>();
   reconnectTimer: number | null = null;
-  reconnectDelay = 1000;
+  reconnectDelay = reconnectInitialDelay;
+  connectTimer: number | null = null;
+  heartbeatTimer: number | null = null;
+  heartbeatTimeoutTimer: number | null = null;
   closed = false;
   pendingRefresh = false;
   state: ConnectionState = 'closed';
@@ -51,6 +60,7 @@ class SocketSource {
     this.updateResumeMessage(resumeMessage);
     this.clients.add(port);
     this.sendStatus(port);
+    this.checkConnection();
   }
 
   deregister(port: MessagePort) {
@@ -77,24 +87,70 @@ class SocketSource {
     port.postMessage({type: 'connection-status', state: this.state});
   }
 
+  clearReconnectTimer() {
+    if (this.reconnectTimer === null) return;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+  }
+
+  clearConnectTimer() {
+    if (this.connectTimer === null) return;
+    clearTimeout(this.connectTimer);
+    this.connectTimer = null;
+  }
+
+  clearHeartbeatTimeout() {
+    if (this.heartbeatTimeoutTimer === null) return;
+    clearTimeout(this.heartbeatTimeoutTimer);
+    this.heartbeatTimeoutTimer = null;
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    this.clearHeartbeatTimeout();
+  }
+
+  resetSocket(socket: WebSocket, state: ConnectionState) {
+    if (this.socket !== socket) return;
+    this.socket = null;
+    this.clearConnectTimer();
+    this.stopHeartbeat();
+    this.setState(state);
+    try {
+      socket.close();
+    } catch {
+      // The socket is already unusable.
+    }
+    this.scheduleReconnect();
+  }
+
   connect() {
     if (this.closed || this.socket?.readyState === WebSocket.CONNECTING || this.socket?.readyState === WebSocket.OPEN) return;
 
+    this.clearReconnectTimer();
     this.setState('connecting');
     const socket = new WebSocket(this.url);
     this.socket = socket;
+    this.connectTimer = self.setTimeout(() => {
+      this.resetSocket(socket, 'error');
+    }, connectTimeout);
 
     socket.addEventListener('open', () => {
       if (this.socket !== socket) return;
+      this.clearConnectTimer();
       try {
         socket.send(JSON.stringify(this.resumeMessage));
       } catch (error) {
         this.notify({type: 'worker-error', message: String(error)});
-        socket.close(1011, 'Unable to resume');
+        this.resetSocket(socket, 'error');
         return;
       }
-      this.reconnectDelay = 1000;
+      this.reconnectDelay = reconnectInitialDelay;
       this.setState('open');
+      this.startHeartbeat();
       if (this.pendingRefresh) {
         this.pendingRefresh = false;
         this.sendRefresh();
@@ -102,22 +158,29 @@ class SocketSource {
     });
 
     socket.addEventListener('message', (event) => {
+      if (this.socket !== socket) return;
       let message: Record<string, unknown>;
       try {
         message = JSON.parse(String(event.data));
       } catch {
         message = {type: 'message', data: event.data};
       }
+      if (message.type === 'pong') {
+        this.clearHeartbeatTimeout();
+        return;
+      }
       this.notify(message);
     });
 
     socket.addEventListener('error', () => {
-      if (this.socket === socket) this.setState('error');
+      this.resetSocket(socket, 'error');
     });
 
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.clearConnectTimer();
+      this.stopHeartbeat();
       this.setState('closed');
       this.scheduleReconnect();
     });
@@ -126,28 +189,66 @@ class SocketSource {
   scheduleReconnect() {
     if (this.closed || !this.clients.size || this.reconnectTimer !== null) return;
     const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, reconnectMaxDelay);
     this.reconnectTimer = self.setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
     }, delay);
   }
 
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = self.setInterval(() => this.sendHeartbeat(), heartbeatInterval);
+  }
+
+  sendHeartbeat() {
+    const socket = this.socket;
+    if (socket?.readyState !== WebSocket.OPEN || this.heartbeatTimeoutTimer !== null) return;
+    try {
+      socket.send(JSON.stringify({type: 'ping'}));
+    } catch {
+      this.resetSocket(socket, 'error');
+      return;
+    }
+    this.heartbeatTimeoutTimer = self.setTimeout(() => {
+      this.resetSocket(socket, 'error');
+    }, heartbeatTimeout);
+  }
+
   sendRefresh() {
-    if (this.socket?.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify({type: 'refresh'}));
+    const socket = this.socket;
+    if (socket?.readyState === WebSocket.OPEN) {
+      try {
+        socket.send(JSON.stringify({type: 'refresh'}));
+      } catch {
+        this.pendingRefresh = true;
+        this.resetSocket(socket, 'error');
+      }
     } else {
       this.pendingRefresh = true;
       this.connect();
     }
   }
 
+  checkConnection() {
+    if (this.closed || !this.clients.size) return;
+    if (this.reconnectTimer !== null) {
+      this.clearReconnectTimer();
+      this.connect();
+      return;
+    }
+    if (!this.socket || this.socket.readyState === WebSocket.CLOSED || this.socket.readyState === WebSocket.CLOSING) {
+      this.connect();
+      return;
+    }
+    if (this.socket.readyState === WebSocket.OPEN) this.sendHeartbeat();
+  }
+
   close() {
     this.closed = true;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    this.clearReconnectTimer();
+    this.clearConnectTimer();
+    this.stopHeartbeat();
     this.socket?.close(1000, 'No active tabs');
     this.socket = null;
     this.setState('closed');
@@ -184,6 +285,7 @@ function detachPort(port: MessagePort) {
         if (previous?.url === command.url) {
           previous.updateResumeMessage(command.resume);
           previous.sendStatus(port);
+          previous.checkConnection();
           return;
         }
         if (previous) detachPort(port);
@@ -206,6 +308,8 @@ function detachPort(port: MessagePort) {
         } else {
           port.postMessage({type: 'connection-status', state: 'closed'});
         }
+      } else if (command.type === 'check') {
+        sourcesByPort.get(port)?.checkConnection();
       } else if (command.type === 'close') {
         detachPort(port);
         port.close();

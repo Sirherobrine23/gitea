@@ -12,6 +12,7 @@ type CustomDropzoneFile = Dropzone.DropzoneFile & {uuid: string};
 
 // dropzone has its owner event dispatcher (emitter)
 export const DropzoneCustomEventReloadFiles = 'dropzone-custom-reload-files';
+export const DropzoneCustomEventResetFiles = 'dropzone-custom-reset-files';
 export const DropzoneCustomEventRemovedFile = 'dropzone-custom-removed-file';
 export const DropzoneCustomEventUploadDone = 'dropzone-custom-upload-done';
 
@@ -89,6 +90,21 @@ export async function initDropzone(dropzoneEl: HTMLElement) {
   // "http://localhost:3000/owner/repo/issues/[object%20Event]"
   // the reason is that the preview "callback(dataURL)" is assign to "img.onerror" then "thumbnail" uses the error object as the dataURL and generates '<img src="[object Event]">'
   const dzInst = await createDropzone(dropzoneEl, opts);
+
+  const resetDropzoneFiles = () => {
+    disableRemovedfileEvent = true;
+    try {
+      dzInst.removeAllFiles(true);
+    } finally {
+      disableRemovedfileEvent = false;
+    }
+
+    dropzoneEl.querySelector('.files')!.replaceChildren();
+    for (const el of dropzoneEl.querySelectorAll('.dz-preview')) el.remove();
+    fileUuidDict = {};
+    dropzoneEl.classList.remove('dz-started');
+  };
+
   dzInst.on('success', (file: CustomDropzoneFile, resp: any) => {
     file.uuid = resp.uuid;
     fileUuidDict[file.uuid] = {submitted: false};
@@ -120,14 +136,7 @@ export async function initDropzone(dropzoneEl: HTMLElement) {
       if (!listAttachmentsUrl) return;
       const resp = await GET(listAttachmentsUrl);
       const respData = await resp.json();
-      // do not trigger the "removedfile" event, otherwise the attachments would be deleted from server
-      disableRemovedfileEvent = true;
-      dzInst.removeAllFiles(true);
-      disableRemovedfileEvent = false;
-
-      dropzoneEl.querySelector('.files')!.replaceChildren();
-      for (const el of dropzoneEl.querySelectorAll('.dz-preview')) el.remove();
-      fileUuidDict = {};
+      resetDropzoneFiles();
       for (const attachment of respData) {
         const file = {name: attachment.name, uuid: attachment.uuid, size: attachment.size};
         dzInst.emit('addedfile', file);
@@ -141,9 +150,6 @@ export async function initDropzone(dropzoneEl: HTMLElement) {
         const input = createElementFromAttrs('input', {name: 'files', type: 'hidden', id: `dropzone-file-${file.uuid}`, value: file.uuid});
         dropzoneEl.querySelector('.files')!.append(input);
       }
-      if (!dropzoneEl.querySelector('.dz-preview')) {
-        dropzoneEl.classList.remove('dz-started');
-      }
     } catch (error) {
       // TODO: if listing the existing attachments failed, it should stop from operating the content or attachments,
       //  otherwise the attachments might be lost.
@@ -151,6 +157,8 @@ export async function initDropzone(dropzoneEl: HTMLElement) {
       console.error(error);
     }
   });
+
+  dzInst.on(DropzoneCustomEventResetFiles, resetDropzoneFiles);
 
   dzInst.on('error', (file, message) => {
     showErrorToast(`Dropzone upload error: ${message}`);

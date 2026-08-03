@@ -505,7 +505,7 @@ func issueLiveReadResume(ctx stdcontext.Context, conn *websocket.Conn) ([]issueL
 	return message.States, message.Initialized, nil
 }
 
-func issueLiveReadLoop(ctx stdcontext.Context, cancel stdcontext.CancelFunc, conn *websocket.Conn, refresh chan<- struct{}) {
+func issueLiveReadLoop(ctx stdcontext.Context, cancel stdcontext.CancelFunc, conn *websocket.Conn, refresh, heartbeat chan<- struct{}) {
 	defer cancel()
 	for {
 		messageType, payload, err := conn.Read(ctx)
@@ -517,12 +517,20 @@ func issueLiveReadLoop(ctx stdcontext.Context, cancel stdcontext.CancelFunc, con
 		}
 
 		var message issueLiveClientMessage
-		if json.Unmarshal(payload, &message) != nil || message.Type != "refresh" {
+		if json.Unmarshal(payload, &message) != nil {
 			continue
 		}
-		select {
-		case refresh <- struct{}{}:
-		default:
+		switch message.Type {
+		case "refresh":
+			select {
+			case refresh <- struct{}{}:
+			default:
+			}
+		case "ping":
+			select {
+			case heartbeat <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
@@ -552,6 +560,7 @@ func IssueLive(ctx *context.Context) {
 	brokerRefresh, unregisterRefresh := registerIssueLiveRefresh(ctx.Repo.Repository.ID, ctx.PathParamInt64("index"))
 	defer unregisterRefresh()
 	clientRefresh := make(chan struct{}, 1)
+	clientHeartbeat := make(chan struct{}, 1)
 
 	initialHTML, err := prepareIssueLiveSnapshot(ctx)
 	if err != nil {
@@ -629,7 +638,7 @@ func IssueLive(ctx *context.Context) {
 		}
 	}
 
-	go issueLiveReadLoop(connectionCtx, cancel, conn, clientRefresh)
+	go issueLiveReadLoop(connectionCtx, cancel, conn, clientRefresh, clientHeartbeat)
 
 	refreshTicker := time.NewTicker(issueLiveSafetyRefreshInterval)
 	defer refreshTicker.Stop()
@@ -689,6 +698,11 @@ func IssueLive(ctx *context.Context) {
 					goto refreshTimeline
 				}
 			}
+		case <-clientHeartbeat:
+			if err := issueLiveWrite(connectionCtx, conn, issueLiveServerMessage{Type: "pong"}); err != nil {
+				return
+			}
+			continue
 		case <-pingTicker.C:
 			pingCtx, pingCancel := stdcontext.WithTimeout(connectionCtx, issueLiveWriteTimeout)
 			err := conn.Ping(pingCtx)

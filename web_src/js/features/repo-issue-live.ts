@@ -155,7 +155,7 @@ function currentResumeMessage(): IssueLiveClientMessage {
   return {
     type: 'resume',
     initialized: synchronizedBaseline,
-    states: synchronizedBaseline ? [...synchronizedStates.values()] : initialResumeStates(),
+    states: synchronizedBaseline ? synchronizedStates.values().toArray() : initialResumeStates(),
   };
 }
 
@@ -421,7 +421,7 @@ function initLiveCommentSubmit(worker: IssueLiveSharedWorker) {
       const editor = getComboMarkdownEditor(form.querySelector('.combo-markdown-editor'));
       editor?.value('');
       editor?.textarea.dispatchEvent(new Event('input', {bubbles: true}));
-      editor?.dropzoneReloadFiles();
+      editor?.dropzoneResetFiles();
       worker.refresh();
     } catch (error) {
       console.error(error);
@@ -474,6 +474,7 @@ export function initRepoIssueLive() {
     if (document.visibilityState !== 'visible') return;
     flushPendingOperations();
     updateSharedWorkerResumeState();
+    worker.check();
   };
   document.addEventListener('visibilitychange', flushVisiblePendingOperations);
 

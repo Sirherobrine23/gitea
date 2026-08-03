@@ -68,6 +68,10 @@ export class IssueLiveSharedWorker {
     this.sharedWorker.port.postMessage({type: 'status'});
   }
 
+  check() {
+    this.sharedWorker.port.postMessage({type: 'check'});
+  }
+
   close() {
     this.sharedWorker.port.postMessage({type: 'close'});
     this.sharedWorker.port.close();

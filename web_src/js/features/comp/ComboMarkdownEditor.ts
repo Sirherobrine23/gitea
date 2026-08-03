@@ -21,7 +21,7 @@ import {
   replaceTextareaSelection,
   triggerEditorContentChanged,
 } from './EditorMarkdown.ts';
-import {DropzoneCustomEventReloadFiles, initDropzone} from '../dropzone.ts';
+import {DropzoneCustomEventReloadFiles, DropzoneCustomEventResetFiles, initDropzone} from '../dropzone.ts';
 import {createTippy} from '../../modules/tippy.ts';
 import {initTabSwitcher} from '../../modules/fomantic/tab.ts';
 import type EasyMDE from 'easymde';
@@ -190,6 +190,11 @@ export class ComboMarkdownEditor {
   dropzoneReloadFiles() {
     if (!this.dropzone) return;
     this.attachedDropzoneInst.emit(DropzoneCustomEventReloadFiles);
+  }
+
+  dropzoneResetFiles() {
+    if (!this.dropzone) return;
+    this.attachedDropzoneInst.emit(DropzoneCustomEventResetFiles);
   }
 
   dropzoneSubmitReload() {
