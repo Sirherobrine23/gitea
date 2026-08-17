@@ -1,0 +1,65 @@
+// Copyright 2026 The Gitea Authors. All rights reserved.
+// SPDX-License-Identifier: MIT
+
+package mailer
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+
+	"gitea.dev/modules/setting"
+	mailbox_service "gitea.dev/services/mailbox"
+	sender_service "gitea.dev/services/mailer/sender"
+)
+
+type mailboxAwareSender struct {
+	ctx      context.Context
+	upstream sender_service.Sender
+}
+
+type mailboxRawMessage []byte
+
+func (m mailboxRawMessage) WriteTo(w io.Writer) (int64, error) {
+	n, err := w.Write(m)
+	return int64(n), err
+}
+
+func (s *mailboxAwareSender) Send(from string, to []string, msg io.WriterTo) error {
+	if !setting.MailboxServer.Enabled || len(to) == 0 {
+		return s.upstream.Send(from, to, msg)
+	}
+	var raw bytes.Buffer
+	if _, err := msg.WriteTo(&raw); err != nil {
+		return err
+	}
+
+	local := make([]string, 0, len(to))
+	remote := make([]string, 0, len(to))
+	for _, recipient := range to {
+		if _, err := mailbox_service.ResolveRecipient(s.ctx, recipient); err == nil {
+			local = append(local, recipient)
+			continue
+		}
+		if mailbox_service.IsLocalAddress(recipient) {
+			return fmt.Errorf("local mailbox recipient does not exist: %s", recipient)
+		}
+		remote = append(remote, recipient)
+	}
+
+	wire := mailboxRawMessage(raw.Bytes())
+	// Relay first. Local delivery is Message-ID de-duplicated, so a queue retry
+	// after a partial failure cannot create repeated local copies.
+	if len(remote) > 0 {
+		if err := s.upstream.Send(from, remote, wire); err != nil {
+			return err
+		}
+	}
+	if len(local) > 0 {
+		if _, err := mailbox_service.DeliverRaw(s.ctx, from, local, raw.Bytes(), false); err != nil {
+			return err
+		}
+	}
+	return nil
+}

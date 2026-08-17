@@ -61,6 +61,7 @@ var MailService *Mailer
 
 func loadMailsFrom(rootCfg ConfigProvider) {
 	loadMailerFrom(rootCfg)
+	loadMailboxServerFrom(rootCfg)
 	loadRegisterMailFrom(rootCfg)
 	loadNotifyMailFrom(rootCfg)
 	loadIncomingEmailFrom(rootCfg)

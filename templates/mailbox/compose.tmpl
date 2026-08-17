@@ -1,0 +1,26 @@
+{{template "base/head" .}}
+<div role="main" class="page-content user mail-box">
+	<div class="ui container">
+		<div class="ui stackable grid">
+			<div class="four wide column">{{template "mailbox/sidebar" .}}</div>
+			<div class="twelve wide column">
+				<h2 class="ui header">Compose email</h2>
+				{{if .ComposeError}}<div class="ui negative message">{{.ComposeError}}</div>{{end}}
+				<form class="ui form" method="post" action="{{AppSubUrl}}/mail/compose" enctype="multipart/form-data">
+					<div class="field"><label>From</label><input value="{{.MailboxAddress}}" readonly></div>
+					<div class="required field"><label>To</label><input name="to" value="{{.ComposeTo}}" autocomplete="off" placeholder="user@example.com, other@example.com"></div>
+					<div class="two fields">
+						<div class="field"><label>Cc</label><input name="cc" value="{{.ComposeCc}}"></div>
+						<div class="field"><label>Bcc</label><input name="bcc" value="{{.ComposeBcc}}"></div>
+					</div>
+					<div class="field"><label>Subject</label><input name="subject" value="{{.ComposeSubject}}"></div>
+					<div class="field"><label>Message</label><textarea name="body" rows="16">{{.ComposeBody}}</textarea></div>
+					<div class="field"><label>Attachments</label><input type="file" name="attachments" multiple></div>
+					<button class="ui primary button" type="submit">{{svg "octicon-paper-airplane"}} Send</button>
+					<a class="ui button" href="{{AppSubUrl}}/mail">Cancel</a>
+				</form>
+			</div>
+		</div>
+	</div>
+</div>
+{{template "base/footer" .}}

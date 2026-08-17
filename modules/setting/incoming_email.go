@@ -16,6 +16,7 @@ const IncomingEmailTokenPlaceholder = "%{token}"
 
 var IncomingEmail = struct {
 	Enabled              bool
+	LocalDelivery        bool `ini:"LOCAL_DELIVERY"`
 	ReplyToAddress       string
 	Host                 string
 	Port                 int

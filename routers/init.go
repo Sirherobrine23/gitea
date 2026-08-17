@@ -40,6 +40,7 @@ import (
 	"gitea.dev/services/cron"
 	feed_service "gitea.dev/services/feed"
 	indexer_service "gitea.dev/services/indexer"
+	mailbox_service "gitea.dev/services/mailbox"
 	"gitea.dev/services/mailer"
 	mailer_incoming "gitea.dev/services/mailer/incoming"
 	markup_service "gitea.dev/services/markup"
@@ -157,6 +158,7 @@ func InitWebInstalled(ctx context.Context) {
 	mustInit(repo_migrations.Init)
 	mustInit(websocket_service.Init)
 	mustInitCtx(ctx, mailer_incoming.Init)
+	mustInitCtx(ctx, mailbox_service.Init)
 
 	mustInitCtx(ctx, syncAppConfForGit)
 

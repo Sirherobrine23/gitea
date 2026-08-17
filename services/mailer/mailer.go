@@ -43,6 +43,10 @@ func NewContext(ctx context.Context) {
 		sender = &sender_service.SMTPSender{}
 	}
 
+	if setting.MailboxServer.Enabled {
+		sender = &mailboxAwareSender{ctx: ctx, upstream: sender}
+	}
+
 	_ = templates.MailRenderer()
 
 	mailQueue = queue.CreateSimpleQueue(graceful.GetManager().ShutdownContext(), "mail", func(items ...*sender_service.Message) []*sender_service.Message {
