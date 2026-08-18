@@ -124,6 +124,23 @@ The raw RFC 5322 message is retained for IMAP and `.eml` download. Parsed envelo
 
 ## Protocol and security scope
 
-The integrated server implements the mailbox-facing SMTP/ESMTP path (including STARTTLS, AUTH PLAIN/LOGIN, local recipient validation, authenticated relay, size/recipient limits and null reverse paths) and an IMAP4 server backed by the same database storage. HTML mail is sanitized before rendering in the authenticated web UI.
+## Libraries
+
+The protocol layers are provided by the `github.com/emersion` mail stack rather than hand-written:
+
+| Concern | Library |
+| --- | --- |
+| SMTP/ESMTP server (STARTTLS, AUTH, SIZE, line and message limits, DATA transparency) | `github.com/emersion/go-smtp` |
+| SASL mechanisms | `github.com/emersion/go-sasl` |
+| IMAP4rev1 server | `github.com/emersion/go-imap` |
+| DKIM, DMARC, Authentication-Results | `github.com/emersion/go-msgauth` |
+| MIME parsing | `github.com/emersion/go-message`, `github.com/jhillyerd/enmime` |
+| SPF | `blitiri.com.ar/go/spf` |
+
+Gitea supplies only the parts that are specific to it: the session backends, recipient resolution against Gitea accounts and aliases, delivery into the database, and the sender-authentication policy. `AUTH LOGIN` is the one protocol detail implemented here, because `go-sasl` ships only a client for that mechanism.
+
+## Limitations
+
+The integrated server covers the mailbox-facing SMTP path (local recipient validation, authenticated relay and null reverse paths) and an IMAP4 server backed by the same database storage. HTML mail is sanitized before rendering in the authenticated web UI.
 
 Remote-domain outbound delivery deliberately uses the existing `[mailer]` transport rather than implementing DNS MX resolution, an outbound retry queue, bounce processing, reputation/greylisting, antivirus or content-spam filtering. DKIM signing plus inbound DKIM/SPF/DMARC authentication are native, but a production Internet mail deployment still needs correct DNS, abuse controls and any desired spam/virus filtering at the deployment boundary.

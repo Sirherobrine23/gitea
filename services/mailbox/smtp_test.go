@@ -4,119 +4,143 @@
 package mailbox
 
 import (
-	"bufio"
+	"context"
 	"errors"
-	"io"
+	"net"
 	"strings"
 	"testing"
 
+	user_model "gitea.dev/models/user"
+	"gitea.dev/modules/setting"
+	"gitea.dev/modules/test"
+
+	"github.com/emersion/go-sasl"
+	"github.com/emersion/go-smtp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseSMTPPath(t *testing.T) {
-	cases := []struct {
-		in         string
-		allowEmpty bool
-		want       string
-		wantErr    bool
-	}{
-		{in: "<user@example.com>", want: "user@example.com"},
-		{in: "<user@example.com> SIZE=1234", want: "user@example.com"},
-		{in: "<>", allowEmpty: true, want: ""},
-		{in: "<>", wantErr: true},
-		{in: "user@example.com", wantErr: true},
-		{in: "<user@example.com", wantErr: true},
-		// A display name is not an addr-spec and must be refused.
-		{in: "<Bob <bob@example.com>>", wantErr: true},
-		// A CR inside the path would let a peer inject a second command.
-		{in: "<user\r\nDATA@example.com>", wantErr: true},
-		// Trailing ESMTP parameters are discarded, so they cannot inject anything.
-		{in: "<user@example.com>\r\nDATA", want: "user@example.com"},
-	}
-	for _, c := range cases {
-		got, err := parseSMTPPath(c.in, c.allowEmpty)
-		if c.wantErr {
-			assert.Error(t, err, c.in)
-			continue
-		}
-		require.NoError(t, err, c.in)
-		assert.Equal(t, c.want, got, c.in)
-	}
-}
+func TestLoginServerExchange(t *testing.T) {
+	var gotUser, gotPass string
+	server := newLoginServer(func(username, password string) error {
+		gotUser, gotPass = username, password
+		return nil
+	})
 
-func TestTrimLineEnding(t *testing.T) {
-	assert.Equal(t, "text", trimLineEnding("text\r\n"))
-	assert.Equal(t, "text", trimLineEnding("text\n"))
-	// Only one terminator is removed: extra CRs are body bytes that DKIM hashes.
-	assert.Equal(t, "text\r", trimLineEnding("text\r\r\n"))
-	assert.Equal(t, "text", trimLineEnding("text"))
-}
-
-func TestReadLimitedLine(t *testing.T) {
-	r := bufio.NewReader(strings.NewReader("first\r\nsecond\r\n"))
-	line, err := readLimitedLine(r, 1024)
+	// AUTH LOGIN with no initial response prompts for each field in turn.
+	challenge, done, err := server.Next(nil)
 	require.NoError(t, err)
-	assert.Equal(t, "first\r\n", line)
+	assert.False(t, done)
+	assert.Equal(t, "Username:", string(challenge))
 
-	line, err = readLimitedLine(r, 1024)
+	challenge, done, err = server.Next([]byte("alice"))
 	require.NoError(t, err)
-	assert.Equal(t, "second\r\n", line)
+	assert.False(t, done)
+	assert.Equal(t, "Password:", string(challenge))
 
-	_, err = readLimitedLine(r, 1024)
-	assert.ErrorIs(t, err, io.EOF)
+	_, done, err = server.Next([]byte("secret"))
+	require.NoError(t, err)
+	assert.True(t, done)
+	assert.Equal(t, "alice", gotUser)
+	assert.Equal(t, "secret", gotPass)
 }
 
-func TestReadLimitedLineRefusesOverlongLine(t *testing.T) {
-	// A peer that never sends a newline must not be able to grow the buffer.
-	_, err := readLimitedLine(bufio.NewReader(strings.NewReader(strings.Repeat("x", 200_000))), 1024)
-	assert.ErrorIs(t, err, errLineTooLong)
-}
-
-func TestDecodePlainAuth(t *testing.T) {
-	username, password, err := decodePlainAuth("AHVzZXIAcGFzcw==") // \0user\0pass
+func TestLoginServerRejectsBadCredentials(t *testing.T) {
+	server := newLoginServer(func(string, string) error { return smtp.ErrAuthFailed })
+	_, _, err := server.Next(nil)
 	require.NoError(t, err)
-	assert.Equal(t, "user", username)
-	assert.Equal(t, "pass", password)
-
-	// An authorization identity different from the authentication identity is
-	// impersonation and must be refused.
-	_, _, err = decodePlainAuth("b3RoZXIAdXNlcgBwYXNz") // other\0user\0pass
+	_, _, err = server.Next([]byte("alice"))
+	require.NoError(t, err)
+	_, done, err := server.Next([]byte("wrong"))
 	assert.Error(t, err)
-
-	_, _, err = decodePlainAuth("bm90LWJhc2U2NC1zdHJ1Y3R1cmU=")
-	assert.Error(t, err)
+	assert.False(t, done)
 }
 
-// unstuffDataLines mirrors the DATA reader so the transparency rules can be
-// checked without a live connection.
-func unstuffDataLines(t *testing.T, data string) string {
+func TestRemoteIP(t *testing.T) {
+	assert.Equal(t, "192.0.2.1", remoteIP(&net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 25}).String())
+	assert.Nil(t, remoteIP(nil))
+}
+
+func TestAddReceivedHeader(t *testing.T) {
+	t.Cleanup(test.MockVariableValue(&setting.MailboxServer.Hostname, "mail.example.com"))
+	raw := []byte("Subject: hi\r\n\r\nbody\r\n")
+
+	header := string(addReceivedHeader(raw, &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 40000}, false))
+	assert.True(t, strings.HasPrefix(header, "Received: from [192.0.2.1] by mail.example.com with ESMTP;"))
+	assert.True(t, strings.HasSuffix(header, string(raw)), "the message must be preserved verbatim")
+
+	// A TLS session is recorded as ESMTPS.
+	assert.Contains(t, string(addReceivedHeader(raw, nil, true)), "with ESMTPS;")
+	assert.Contains(t, string(addReceivedHeader(raw, nil, false)), "from [unknown]")
+}
+
+// startTestSMTP runs a real go-smtp server on a loopback port and returns its address.
+func startTestSMTP(t *testing.T, requireAuth bool) string {
 	t.Helper()
-	r := bufio.NewReader(strings.NewReader(data))
-	var out strings.Builder
-	for {
-		line, err := readLimitedLine(r, maxDataLineSize)
-		if err != nil && !errors.Is(err, io.EOF) {
-			t.Fatal(err)
-		}
-		trimmed := trimLineEnding(line)
-		if trimmed == "." {
-			break
-		}
-		trimmed = strings.TrimPrefix(trimmed, ".")
-		out.WriteString(trimmed)
-		out.WriteString("\r\n")
-		if errors.Is(err, io.EOF) {
-			break
-		}
-	}
-	return out.String()
+	t.Cleanup(test.MockVariableValue(&setting.MailboxServer.Hostname, "mail.example.com"))
+	t.Cleanup(test.MockVariableValue(&setting.MailboxServer.AllowInsecureAuth, true))
+	t.Cleanup(test.MockVariableValue(&setting.MailboxServer.MaxRecipients, 100))
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cfg := smtpListenerConfig{addr: ln.Addr().String(), requireAuth: requireAuth, name: "SMTP test"}
+	server := newSMTPServer(ctx, cfg, nil)
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+	})
+	return ln.Addr().String()
 }
 
-func TestDataTransparency(t *testing.T) {
-	// RFC 5321 4.5.2: one leading dot is stripped from every content line.
-	assert.Equal(t, "body\r\n.stuffed\r\n", unstuffDataLines(t, "body\r\n..stuffed\r\n.\r\n"))
-	assert.Equal(t, "leading\r\n", unstuffDataLines(t, ".leading\r\n.\r\n"))
-	// A bare LF from a lax sender is normalized to CRLF before signing.
-	assert.Equal(t, "a\r\nb\r\n", unstuffDataLines(t, "a\nb\n.\r\n"))
+func TestSMTPSubmissionRequiresAuth(t *testing.T) {
+	addr := startTestSMTP(t, true)
+
+	client, err := smtp.Dial(addr)
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, client.Hello("client.example.net"))
+
+	// A submission listener must refuse a return path before authentication.
+	err = client.Mail("alice@example.com", nil)
+	require.Error(t, err)
+	var smtpErr *smtp.SMTPError
+	require.ErrorAs(t, err, &smtpErr)
+	assert.Equal(t, 502, smtpErr.Code)
+}
+
+func TestSMTPAuthRejectsInvalidCredentials(t *testing.T) {
+	t.Cleanup(test.MockVariableValue(&signInFunc, func(context.Context, string, string) (*user_model.User, error) {
+		return nil, errors.New("invalid credentials")
+	}))
+	addr := startTestSMTP(t, true)
+
+	client, err := smtp.Dial(addr)
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, client.Hello("client.example.net"))
+
+	// Both mechanisms our sessions advertise must reject a bad password.
+	assert.Error(t, client.Auth(sasl.NewPlainClient("", "alice", "wrong")))
+	assert.Error(t, client.Auth(sasl.NewLoginClient("alice", "wrong")))
+}
+
+func TestSMTPAdvertisesConfiguredLimits(t *testing.T) {
+	t.Cleanup(test.MockVariableValue(&setting.MailboxServer.MaxMessageSize, int64(1234)))
+	addr := startTestSMTP(t, false)
+
+	client, err := smtp.Dial(addr)
+	require.NoError(t, err)
+	defer client.Close()
+	require.NoError(t, client.Hello("client.example.net"))
+
+	// SIZE is what tells a sender to give up before transferring a huge message.
+	ok, size := client.Extension("SIZE")
+	assert.True(t, ok)
+	assert.Equal(t, "1234", size)
+
+	hasAuth, _ := client.Extension("AUTH")
+	assert.True(t, hasAuth, "AUTH is advertised once insecure auth is permitted")
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net"
 
 	"gitea.dev/modules/setting"
 )
@@ -30,6 +31,12 @@ func loadTLSConfig() (*tls.Config, error) {
 
 // Init starts the integrated SMTP and IMAP services. The listeners are only
 // created when [mailbox] ENABLED is true.
+// netListen is a variable so listener creation can be unit-tested without
+// binding privileged ports.
+var netListen = func(network, address string) (net.Listener, error) {
+	return net.Listen(network, address)
+}
+
 func Init(ctx context.Context) error {
 	if !setting.MailboxServer.Enabled {
 		return nil

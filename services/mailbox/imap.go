@@ -79,12 +79,6 @@ func initIMAP(ctx context.Context, tlsConfig *tls.Config) error {
 	return nil
 }
 
-// netListen is a variable so the listener creation can be unit-tested without
-// binding privileged ports.
-var netListen = func(network, address string) (net.Listener, error) {
-	return net.Listen(network, address)
-}
-
 func newIMAPServer(b backend.Backend, tlsConfig *tls.Config) *imapserver.Server {
 	s := imapserver.New(b)
 	s.TLSConfig = tlsConfig
