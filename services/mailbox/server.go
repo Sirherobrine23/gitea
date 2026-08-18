@@ -38,6 +38,10 @@ func Init(ctx context.Context) error {
 		return fmt.Errorf("[mailbox] DOMAIN must be configured when the mailbox server is enabled")
 	}
 
+	if err := initMessageAuthentication(); err != nil {
+		return err
+	}
+
 	tlsConfig, err := loadTLSConfig()
 	if err != nil {
 		return err

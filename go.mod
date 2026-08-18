@@ -5,6 +5,7 @@ go 1.27
 toolchain go1.27.1
 
 require (
+	blitiri.com.ar/go/spf v1.5.1
 	connectrpc.com/connect v1.20.0
 	gitea.com/go-chi/binding v0.0.0-20260819122636-082915a69981
 	gitea.com/go-chi/cache v0.2.1
@@ -39,7 +40,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/editorconfig/editorconfig-core-go/v2 v2.6.4
 	github.com/emersion/go-imap v1.2.1
-	github.com/emersion/go-message v0.15.0
+	github.com/emersion/go-message v0.18.1
+	github.com/emersion/go-msgauth v0.7.0
 	github.com/emirpasic/gods v1.18.1
 	github.com/felixge/fgprof v0.9.5
 	github.com/fsnotify/fsnotify v1.10.1
@@ -114,6 +116,8 @@ require (
 	gopkg.in/ini.v1 v1.67.3
 	modernc.org/sqlite v1.57.0
 	mvdan.cc/xurls/v2 v2.6.0
+	sirherobrine23.com.br/Sirherobrine23/whois v0.1.0
+	strk.kbt.io/projects/go/libravatar v0.0.0-20260301104140-add494e31dab
 	xorm.io/builder v0.3.13
 	xorm.io/xorm v1.4.1
 )

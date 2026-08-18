@@ -17,12 +17,21 @@ import (
 	"strings"
 	"time"
 
+	mailbox_model "gitea.dev/models/mailbox"
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/setting"
 )
 
-const smtpSessionTimeout = 10 * time.Minute
+const (
+	smtpSessionTimeout = 10 * time.Minute
+	// RFC 5321 caps commands at 512 and text lines at 1000 octets. Both limits are
+	// raised here because real senders exceed them, while still bounding memory.
+	maxCommandLineSize = 64 * 1024
+	maxDataLineSize    = 1024 * 1024
+)
+
+var errLineTooLong = errors.New("SMTP line exceeds the maximum length")
 
 type smtpListenerConfig struct {
 	addr        string
@@ -40,6 +49,7 @@ type smtpSession struct {
 	implicitTLS bool
 	tlsActive   bool
 	helo        bool
+	heloName    string
 	user        *user_model.User
 	mailFrom    string
 	mailSet     bool
@@ -129,14 +139,18 @@ func (s *smtpSession) serve() {
 		verb = strings.ToUpper(verb)
 		switch verb {
 		case "EHLO":
+			if !s.setHelo(arg) {
+				continue
+			}
 			s.resetTransaction()
-			s.helo = true
 			if err := s.ehlo(arg); err != nil {
 				return
 			}
 		case "HELO":
+			if !s.setHelo(arg) {
+				continue
+			}
 			s.resetTransaction()
-			s.helo = true
 			if err := s.reply(250, "%s", setting.MailboxServer.Hostname); err != nil {
 				return
 			}
@@ -171,11 +185,33 @@ func (s *smtpSession) serve() {
 }
 
 func (s *smtpSession) readCommandLine() (string, error) {
-	line, err := s.rw.ReadString('\n')
-	if len(line) > 65536 {
-		return "", errors.New("SMTP command line too long")
+	line, err := readLimitedLine(s.rw.Reader, maxCommandLineSize)
+	return trimLineEnding(line), err
+}
+
+// readLimitedLine reads one LF-terminated line without buffering more than limit
+// bytes, so a peer that never sends a newline cannot exhaust memory. ReadSlice
+// caps each chunk at the bufio buffer size, which bounds growth between checks.
+func readLimitedLine(r *bufio.Reader, limit int) (string, error) {
+	var sb strings.Builder
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if sb.Len()+len(chunk) > limit {
+			return "", errLineTooLong
+		}
+		sb.Write(chunk)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return sb.String(), err
 	}
-	return strings.TrimRight(line, "\r\n"), err
+}
+
+// trimLineEnding removes exactly one CRLF or LF terminator. TrimRight would also
+// eat meaningful trailing CRs, which changes the bytes DKIM hashes.
+func trimLineEnding(line string) string {
+	line = strings.TrimSuffix(line, "\n")
+	return strings.TrimSuffix(line, "\r")
 }
 
 func (s *smtpSession) reply(code int, format string, args ...any) error {
@@ -183,6 +219,17 @@ func (s *smtpSession) reply(code int, format string, args ...any) error {
 		return err
 	}
 	return s.rw.Flush()
+}
+
+func (s *smtpSession) setHelo(arg string) bool {
+	arg = strings.TrimSpace(arg)
+	if arg == "" || strings.ContainsAny(arg, "\r\n \t") {
+		_ = s.reply(501, "5.5.4 EHLO/HELO requires a single domain or address literal")
+		return false
+	}
+	s.helo = true
+	s.heloName = arg
+	return true
 }
 
 func (s *smtpSession) ehlo(_ string) error {
@@ -234,6 +281,7 @@ func (s *smtpSession) startTLS() bool {
 	s.rw = bufio.NewReadWriter(bufio.NewReader(tlsConn), bufio.NewWriter(tlsConn))
 	s.tlsActive = true
 	s.helo = false
+	s.heloName = ""
 	s.user = nil
 	s.resetTransaction()
 	return true
@@ -278,7 +326,7 @@ func (s *smtpSession) auth(arg string) {
 		if len(fields) > 1 {
 			username, err = decodeBase64String(fields[1])
 		} else {
-			if err = s.reply(334, base64.StdEncoding.EncodeToString([]byte("Username:"))); err != nil {
+			if err = s.reply(334, "%s", base64.StdEncoding.EncodeToString([]byte("Username:"))); err != nil {
 				return
 			}
 			var line string
@@ -288,7 +336,7 @@ func (s *smtpSession) auth(arg string) {
 			}
 		}
 		if err == nil {
-			if err = s.reply(334, base64.StdEncoding.EncodeToString([]byte("Password:"))); err != nil {
+			if err = s.reply(334, "%s", base64.StdEncoding.EncodeToString([]byte("Password:"))); err != nil {
 				return
 			}
 			var line string
@@ -434,17 +482,19 @@ func (s *smtpSession) data() {
 		if err := s.conn.SetDeadline(time.Now().Add(smtpSessionTimeout)); err != nil {
 			return
 		}
-		line, err := s.rw.ReadString('\n')
+		line, err := readLimitedLine(s.rw.Reader, maxDataLineSize)
 		if err != nil {
+			if errors.Is(err, errLineTooLong) {
+				_ = s.reply(500, "5.5.2 Line too long")
+			}
 			return
 		}
-		trimmed := strings.TrimRight(line, "\r\n")
+		trimmed := trimLineEnding(line)
 		if trimmed == "." {
 			break
 		}
-		if strings.HasPrefix(trimmed, "..") {
-			trimmed = trimmed[1:]
-		}
+		// RFC 5321 4.5.2: a leading dot on any content line is transparency padding.
+		trimmed = strings.TrimPrefix(trimmed, ".")
 		if !tooLarge {
 			buf.WriteString(trimmed)
 			buf.WriteString("\r\n")
@@ -459,8 +509,48 @@ func (s *smtpSession) data() {
 		return
 	}
 	allowRelay := s.user != nil && setting.MailboxServer.RelayEnabled
-	raw := addReceivedHeader(buf.Bytes(), s.conn.RemoteAddr(), s.tlsActive)
-	if _, err := DeliverRaw(s.ctx, s.mailFrom, s.recipients, raw, allowRelay); err != nil {
+	raw := buf.Bytes()
+	deliveryOptions := DeliveryOptions{AllowRelay: allowRelay}
+
+	if s.user == nil {
+		auth := authenticateIncoming(s.ctx, remoteIP(s.conn.RemoteAddr()), s.heloName, s.mailFrom, raw)
+		logInboundAuthentication(auth.Action, remoteIP(s.conn.RemoteAddr()), s.mailFrom)
+		switch auth.Action {
+		case inboundAuthDefer:
+			_ = s.reply(451, "4.7.5 Message authentication temporarily unavailable")
+			s.resetTransaction()
+			return
+		case inboundAuthReject:
+			_ = s.reply(550, "5.7.1 Message rejected by DMARC policy")
+			s.resetTransaction()
+			return
+		case inboundAuthQuarantine:
+			deliveryOptions.SkipHandlers = true
+			if setting.MailboxServer.DMARCQuarantineJunk {
+				deliveryOptions.LocalFolder = mailbox_model.FolderJunk
+			}
+		}
+		raw = prependMessageHeader(raw, auth.Header)
+		raw = addReceivedHeader(raw, s.conn.RemoteAddr(), s.tlsActive)
+	} else {
+		if err := validateMessageFrom(s.ctx, s.user, raw); err != nil {
+			log.Warn("Mailbox SMTP rejected unauthorized RFC5322.From for user %d: %v", s.user.ID, err)
+			_ = s.reply(553, "5.7.1 RFC5322.From address is not owned by authenticated user")
+			s.resetTransaction()
+			return
+		}
+		raw = addReceivedHeader(raw, s.conn.RemoteAddr(), s.tlsActive)
+		var err error
+		raw, err = SignOutboundDKIM(raw)
+		if err != nil {
+			log.Error("Mailbox SMTP DKIM signing failed for authenticated user %d: %v", s.user.ID, err)
+			_ = s.reply(451, "4.7.0 Temporary message signing failure")
+			s.resetTransaction()
+			return
+		}
+	}
+
+	if _, err := DeliverRawWithOptions(s.ctx, s.mailFrom, s.recipients, raw, deliveryOptions); err != nil {
 		log.Error("Mailbox SMTP delivery failed from %q to %v: %v", s.mailFrom, s.recipients, err)
 		if errors.Is(err, ErrQuotaExceeded) {
 			_ = s.reply(552, "5.2.2 Mailbox quota exceeded")
@@ -472,6 +562,20 @@ func (s *smtpSession) data() {
 	}
 	_ = s.reply(250, "2.0.0 Message accepted for delivery")
 	s.resetTransaction()
+}
+
+func remoteIP(remote net.Addr) net.IP {
+	if remote == nil {
+		return nil
+	}
+	if tcp, ok := remote.(*net.TCPAddr); ok {
+		return tcp.IP
+	}
+	host, _, err := net.SplitHostPort(remote.String())
+	if err != nil {
+		return net.ParseIP(remote.String())
+	}
+	return net.ParseIP(host)
 }
 
 func addReceivedHeader(raw []byte, remote net.Addr, tlsActive bool) []byte {

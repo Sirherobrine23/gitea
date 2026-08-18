@@ -113,10 +113,12 @@ type MailAlias struct {
 // Short aliases keep the mailbox package API readable while the canonical type
 // names stay globally unique for db.NamesToBean, which also indexes models by
 // reflected Go type name.
-type Message = MailMessage
-type Attachment = MailAttachment
-type Folder = MailFolder
-type Alias = MailAlias
+type (
+	Message    = MailMessage
+	Attachment = MailAttachment
+	Folder     = MailFolder
+	Alias      = MailAlias
+)
 
 func (*MailMessage) TableName() string    { return "mailbox_message" }
 func (*MailAttachment) TableName() string { return "mailbox_attachment" }
@@ -469,7 +471,7 @@ func ListMessages(ctx context.Context, userID int64, folder, query string, limit
 	if folder == "" {
 		folder = FolderInbox
 	}
-	cond := builder.Eq{"user_id": userID, "folder": folder}
+	var cond builder.Cond = builder.Eq{"user_id": userID, "folder": folder}
 	if folder != FolderTrash {
 		cond = cond.And(builder.Eq{"deleted": false})
 	}
@@ -487,13 +489,29 @@ func ListMessages(ctx context.Context, userID int64, folder, query string, limit
 		return nil, 0, err
 	}
 	msgs := make([]*Message, 0, limit)
-	err = db.GetEngine(ctx).Where(cond).Desc("received_unix").Limit(limit, offset).Find(&msgs)
+	err = db.GetEngine(ctx).Where(cond).Omit("raw", "html_body", "text_body").Desc("received_unix").Limit(limit, offset).Find(&msgs)
 	return msgs, count, err
 }
 
+// ListFolderMessages returns every message in a folder in UID order, without the
+// raw blob. IMAP clients list a whole folder on every poll, so the wire bytes are
+// only paid for when a command actually needs them; load those with GetMessageRaw.
 func ListFolderMessages(ctx context.Context, userID int64, folder string) ([]*Message, error) {
 	msgs := make([]*Message, 0, 64)
-	return msgs, db.GetEngine(ctx).Where("user_id = ? AND folder = ?", userID, NormalizeFolder(folder)).Asc("uid").Find(&msgs)
+	return msgs, db.GetEngine(ctx).Where("user_id = ? AND folder = ?", userID, NormalizeFolder(folder)).Omit("raw").Asc("uid").Find(&msgs)
+}
+
+// GetMessageRaw loads only the RFC 5322 bytes of one message.
+func GetMessageRaw(ctx context.Context, userID, id int64) ([]byte, error) {
+	msg := &Message{}
+	has, err := db.GetEngine(ctx).Cols("raw").Where("user_id = ? AND id = ?", userID, id).Get(msg)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return nil, ErrMessageNotExist
+	}
+	return msg.Raw, nil
 }
 
 func GetAttachments(ctx context.Context, userID, messageID int64) ([]*Attachment, error) {

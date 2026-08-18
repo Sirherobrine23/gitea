@@ -29,16 +29,42 @@ var MailboxServer = struct {
 	MaxRecipients     int    `ini:"MAX_RECIPIENTS"`
 	DefaultQuota      int64  `ini:"DEFAULT_QUOTA"`
 	Hostname          string `ini:"HOSTNAME"`
+
+	PostmasterUser string `ini:"POSTMASTER_USER"`
+	CatchAllUser   string `ini:"CATCH_ALL_USER"`
+
+	DKIMEnabled                bool   `ini:"DKIM_ENABLED"`
+	DKIMDomain                 string `ini:"DKIM_DOMAIN"`
+	DKIMSelector               string `ini:"DKIM_SELECTOR"`
+	DKIMPrivateKeyFile         string `ini:"DKIM_PRIVATE_KEY_FILE"`
+	DKIMHeaderCanonicalization string `ini:"DKIM_HEADER_CANONICALIZATION"`
+	DKIMBodyCanonicalization   string `ini:"DKIM_BODY_CANONICALIZATION"`
+
+	VerifyDKIM           bool `ini:"VERIFY_DKIM"`
+	VerifySPF            bool `ini:"VERIFY_SPF"`
+	VerifyDMARC          bool `ini:"VERIFY_DMARC"`
+	DMARCEnforce         bool `ini:"DMARC_ENFORCE"`
+	DMARCDeferOnTempFail bool `ini:"DMARC_DEFER_ON_TEMPFAIL"`
+	DMARCQuarantineJunk  bool `ini:"DMARC_QUARANTINE_TO_JUNK"`
 }{
-	WebEnabled:           true,
-	SMTPListen:           ":25",
-	SMTPSubmissionListen: ":587",
-	SMTPSListen:          "",
-	IMAPListen:           ":143",
-	IMAPSListen:          "",
-	MaxMessageSize:       25 * 1024 * 1024,
-	MaxRecipients:        100,
-	RelayEnabled:         true,
+	WebEnabled:                 true,
+	SMTPListen:                 ":25",
+	SMTPSubmissionListen:       ":587",
+	SMTPSListen:                "",
+	IMAPListen:                 ":143",
+	IMAPSListen:                "",
+	MaxMessageSize:             25 * 1024 * 1024,
+	MaxRecipients:              100,
+	RelayEnabled:               true,
+	DKIMSelector:               "gitea",
+	DKIMHeaderCanonicalization: "relaxed",
+	DKIMBodyCanonicalization:   "relaxed",
+	VerifyDKIM:                 true,
+	VerifySPF:                  true,
+	VerifyDMARC:                true,
+	DMARCEnforce:               true,
+	DMARCDeferOnTempFail:       true,
+	DMARCQuarantineJunk:        true,
 }
 
 func loadMailboxServerFrom(rootCfg ConfigProvider) {
@@ -56,6 +82,20 @@ func loadMailboxServerFrom(rootCfg ConfigProvider) {
 	sec.Key("MAX_RECIPIENTS").MustInt(100)
 	sec.Key("DEFAULT_QUOTA").MustInt64(0)
 	sec.Key("HOSTNAME").MustString(Domain)
+	sec.Key("POSTMASTER_USER").MustString("")
+	sec.Key("CATCH_ALL_USER").MustString("")
+	sec.Key("DKIM_ENABLED").MustBool(false)
+	sec.Key("DKIM_DOMAIN").MustString("")
+	sec.Key("DKIM_SELECTOR").MustString("gitea")
+	sec.Key("DKIM_PRIVATE_KEY_FILE").MustString("")
+	sec.Key("DKIM_HEADER_CANONICALIZATION").MustString("relaxed")
+	sec.Key("DKIM_BODY_CANONICALIZATION").MustString("relaxed")
+	sec.Key("VERIFY_DKIM").MustBool(true)
+	sec.Key("VERIFY_SPF").MustBool(true)
+	sec.Key("VERIFY_DMARC").MustBool(true)
+	sec.Key("DMARC_ENFORCE").MustBool(true)
+	sec.Key("DMARC_DEFER_ON_TEMPFAIL").MustBool(true)
+	sec.Key("DMARC_QUARANTINE_TO_JUNK").MustBool(true)
 
 	mustMapSetting(rootCfg, "mailbox", &MailboxServer)
 	MailboxServer.Domain = strings.ToLower(strings.TrimSpace(MailboxServer.Domain))
@@ -67,8 +107,18 @@ func loadMailboxServerFrom(rootCfg ConfigProvider) {
 	MailboxServer.IMAPSListen = strings.TrimSpace(MailboxServer.IMAPSListen)
 	MailboxServer.TLSCertFile = strings.TrimSpace(MailboxServer.TLSCertFile)
 	MailboxServer.TLSKeyFile = strings.TrimSpace(MailboxServer.TLSKeyFile)
+	MailboxServer.PostmasterUser = strings.ToLower(strings.TrimSpace(MailboxServer.PostmasterUser))
+	MailboxServer.CatchAllUser = strings.ToLower(strings.TrimSpace(MailboxServer.CatchAllUser))
+	MailboxServer.DKIMDomain = strings.ToLower(strings.TrimSpace(MailboxServer.DKIMDomain))
+	MailboxServer.DKIMSelector = strings.TrimSpace(MailboxServer.DKIMSelector)
+	MailboxServer.DKIMPrivateKeyFile = strings.TrimSpace(MailboxServer.DKIMPrivateKeyFile)
+	MailboxServer.DKIMHeaderCanonicalization = strings.ToLower(strings.TrimSpace(MailboxServer.DKIMHeaderCanonicalization))
+	MailboxServer.DKIMBodyCanonicalization = strings.ToLower(strings.TrimSpace(MailboxServer.DKIMBodyCanonicalization))
 	if MailboxServer.Hostname == "" {
 		MailboxServer.Hostname = MailboxServer.Domain
+	}
+	if MailboxServer.DKIMDomain == "" {
+		MailboxServer.DKIMDomain = MailboxServer.Domain
 	}
 	if MailboxServer.MaxMessageSize < 0 {
 		MailboxServer.MaxMessageSize = 0

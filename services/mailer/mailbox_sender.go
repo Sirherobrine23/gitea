@@ -48,7 +48,11 @@ func (s *mailboxAwareSender) Send(from string, to []string, msg io.WriterTo) err
 		remote = append(remote, recipient)
 	}
 
-	wire := mailboxRawMessage(raw.Bytes())
+	signedRaw, err := mailbox_service.SignOutboundDKIM(raw.Bytes())
+	if err != nil {
+		return fmt.Errorf("sign Gitea mail with DKIM: %w", err)
+	}
+	wire := mailboxRawMessage(signedRaw)
 	// Relay first. Local delivery is Message-ID de-duplicated, so a queue retry
 	// after a partial failure cannot create repeated local copies.
 	if len(remote) > 0 {
@@ -57,7 +61,7 @@ func (s *mailboxAwareSender) Send(from string, to []string, msg io.WriterTo) err
 		}
 	}
 	if len(local) > 0 {
-		if _, err := mailbox_service.DeliverRaw(s.ctx, from, local, raw.Bytes(), false); err != nil {
+		if _, err := mailbox_service.DeliverRaw(s.ctx, from, local, signedRaw, false); err != nil {
 			return err
 		}
 	}

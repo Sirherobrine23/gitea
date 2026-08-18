@@ -11,6 +11,7 @@ import (
 
 	"gitea.dev/models"
 	authmodel "gitea.dev/models/auth"
+	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/cache"
 	"gitea.dev/modules/git"
 	"gitea.dev/modules/git/gitcmd"
@@ -158,6 +159,10 @@ func InitWebInstalled(ctx context.Context) {
 	mustInit(repo_migrations.Init)
 	mustInit(websocket_service.Init)
 	mustInitCtx(ctx, mailer_incoming.Init)
+	mailbox_service.SetSignInFunc(func(ctx context.Context, username, password string) (*user_model.User, error) {
+		user, _, err := auth.UserSignIn(ctx, username, password)
+		return user, err
+	})
 	mustInitCtx(ctx, mailbox_service.Init)
 
 	mustInitCtx(ctx, syncAppConfForGit)

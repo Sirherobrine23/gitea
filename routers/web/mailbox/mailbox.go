@@ -46,7 +46,7 @@ func prepareCommon(ctx *context.Context) bool {
 		ctx.ServerError("UnreadCount", err)
 		return false
 	}
-	ctx.Data["Title"] = "Mail"
+	ctx.Data["Title"] = ctx.Locale.TrString("mailbox.title")
 	ctx.Data["PageIsMailbox"] = true
 	ctx.Data["MailboxFolders"] = folders
 	ctx.Data["MailboxUnread"] = unread
@@ -269,6 +269,7 @@ func Raw(ctx *context.Context) {
 	}
 	ctx.Resp.Header().Set("Content-Type", "message/rfc822")
 	ctx.Resp.Header().Set("Content-Disposition", httplib.EncodeContentDispositionAttachment("message.eml"))
+	ctx.Resp.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = ctx.Resp.Write(msg.Raw)
 }
 

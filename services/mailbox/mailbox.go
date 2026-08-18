@@ -27,7 +27,6 @@ import (
 	"gitea.dev/modules/log"
 	"gitea.dev/modules/setting"
 	"gitea.dev/modules/timeutil"
-	auth_service "gitea.dev/services/auth"
 	incoming_service "gitea.dev/services/mailer/incoming"
 	sender_service "gitea.dev/services/mailer/sender"
 
@@ -97,28 +96,71 @@ func ResolveRecipient(ctx context.Context, address string) (*user_model.User, er
 		baseLocal = baseLocal[:i]
 	}
 
-	if alias, err := mailbox_model.FindAlias(ctx, local); err == nil {
-		return user_model.GetUserByID(ctx, alias.UserID)
-	}
-	if alias, err := mailbox_model.FindAlias(ctx, baseLocal); err == nil {
-		return user_model.GetUserByID(ctx, alias.UserID)
-	}
-
-	user, err := user_model.GetIndividualUserByName(ctx, baseLocal)
-	if err == nil {
+	// An account name always wins over an alias. AddAlias rejects local-parts that
+	// collide with a username, but an account registered after the alias would
+	// otherwise have its own mail silently delivered to the alias owner.
+	if user, err := user_model.GetIndividualUserByName(ctx, baseLocal); err == nil {
 		if !user.IsActive || user.ProhibitLogin {
 			return nil, ErrNotLocalRecipient
 		}
 		return user, nil
 	}
 
+	if alias, err := mailbox_model.FindAlias(ctx, local); err == nil {
+		return deliverableUser(ctx, alias.UserID)
+	}
+	if alias, err := mailbox_model.FindAlias(ctx, baseLocal); err == nil {
+		return deliverableUser(ctx, alias.UserID)
+	}
+
 	// Also allow a verified Gitea address on the hosted domain to be used as an
 	// inbound alias even when its local-part differs from the username.
-	user, err = user_model.GetUserByEmail(ctx, parsed.Address)
+	user, err := user_model.GetUserByEmail(ctx, parsed.Address)
 	if err == nil && user != nil && user.IsIndividual() && user.IsActive && !user.ProhibitLogin {
 		return user, nil
 	}
+
+	// RFC 2142 requires postmaster and abuse to be reachable on a public domain.
+	if setting.MailboxServer.PostmasterUser != "" && isRoleAddress(baseLocal) {
+		if user, err := roleUser(ctx, setting.MailboxServer.PostmasterUser); err == nil {
+			return user, nil
+		}
+	}
+	if setting.MailboxServer.CatchAllUser != "" {
+		if user, err := roleUser(ctx, setting.MailboxServer.CatchAllUser); err == nil {
+			return user, nil
+		}
+	}
 	return nil, ErrNotLocalRecipient
+}
+
+func isRoleAddress(localPart string) bool {
+	return localPart == "postmaster" || localPart == "abuse"
+}
+
+func roleUser(ctx context.Context, username string) (*user_model.User, error) {
+	user, err := user_model.GetIndividualUserByName(ctx, username)
+	if err != nil {
+		// Warn rather than error: a dictionary attack would otherwise flood the log
+		// on every unknown recipient when the configured account no longer exists.
+		log.Warn("Mailbox role account %q cannot be resolved: %v", username, err)
+		return nil, err
+	}
+	if !user.IsActive || user.ProhibitLogin {
+		return nil, ErrNotLocalRecipient
+	}
+	return user, nil
+}
+
+func deliverableUser(ctx context.Context, userID int64) (*user_model.User, error) {
+	user, err := user_model.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !user.IsIndividual() || !user.IsActive || user.ProhibitLogin {
+		return nil, ErrNotLocalRecipient
+	}
+	return user, nil
 }
 
 func CanAcceptRecipient(ctx context.Context, address string, allowRelay bool) error {
@@ -144,8 +186,23 @@ func CanAcceptRecipient(ctx context.Context, address string, allowRelay bool) er
 	return ErrNotLocalRecipient
 }
 
+// SignInFunc validates a username/password pair for SMTP and IMAP logins.
+type SignInFunc func(ctx context.Context, username, password string) (*user_model.User, error)
+
+var signInFunc SignInFunc
+
+// SetSignInFunc wires the password authenticator used by SMTP AUTH and IMAP LOGIN.
+// It is injected instead of imported because services/auth transitively pulls in
+// services/mailer, which imports this package for local delivery.
+func SetSignInFunc(fn SignInFunc) {
+	signInFunc = fn
+}
+
 func Authenticate(ctx context.Context, username, password string) (*user_model.User, error) {
-	user, _, err := auth_service.UserSignIn(ctx, username, password)
+	if signInFunc == nil {
+		return nil, errors.New("mailbox authenticator is not initialized")
+	}
+	user, err := signInFunc(ctx, username, password)
 	if err != nil {
 		return nil, err
 	}
@@ -176,9 +233,41 @@ func SenderAllowed(ctx context.Context, user *user_model.User, from string) bool
 	return err == nil && resolved != nil && resolved.ID == user.ID
 }
 
+func validateMessageFrom(ctx context.Context, user *user_model.User, raw []byte) error {
+	message, err := mail.ReadMessage(bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("parse RFC5322 message: %w", err)
+	}
+	from, err := message.Header.AddressList("From")
+	if err != nil {
+		return fmt.Errorf("parse RFC5322.From: %w", err)
+	}
+	if len(from) != 1 {
+		return fmt.Errorf("RFC5322.From must contain exactly one mailbox, got %d", len(from))
+	}
+	if !SenderAllowed(ctx, user, from[0].Address) {
+		return errors.New("RFC5322.From address is not owned by the authenticated user")
+	}
+	return nil
+}
+
+// DeliveryOptions controls how a raw message is routed after SMTP authentication.
+type DeliveryOptions struct {
+	AllowRelay   bool
+	LocalFolder  string
+	SkipHandlers bool
+}
+
 // DeliverRaw stores all local recipient copies, dispatches tokenized Gitea replies,
 // and relays non-local recipients through the existing [mailer] transport when allowed.
 func DeliverRaw(ctx context.Context, envelopeFrom string, recipients []string, raw []byte, allowRelay bool) (*DeliveryResult, error) {
+	return DeliverRawWithOptions(ctx, envelopeFrom, recipients, raw, DeliveryOptions{AllowRelay: allowRelay})
+}
+
+// DeliverRawWithOptions is DeliverRaw with explicit local-folder and handler controls.
+// SkipHandlers is used for DMARC-quarantined mail so an unauthenticated message cannot
+// mutate an issue or pull request while it is being quarantined.
+func DeliverRawWithOptions(ctx context.Context, envelopeFrom string, recipients []string, raw []byte, opts DeliveryOptions) (*DeliveryResult, error) {
 	if setting.MailboxServer.MaxMessageSize > 0 && int64(len(raw)) > setting.MailboxServer.MaxMessageSize {
 		return nil, fmt.Errorf("message exceeds configured limit of %d bytes", setting.MailboxServer.MaxMessageSize)
 	}
@@ -216,7 +305,7 @@ func DeliverRaw(ctx context.Context, envelopeFrom string, recipients []string, r
 			localUsers[user.ID] = user
 			continue
 		}
-		if !allowRelay {
+		if !opts.AllowRelay {
 			return nil, fmt.Errorf("%w: %s", ErrNotLocalRecipient, parsed.Address)
 		}
 		if !setting.MailboxServer.RelayEnabled {
@@ -235,19 +324,25 @@ func DeliverRaw(ctx context.Context, envelopeFrom string, recipients []string, r
 		}
 	}
 
+	localFolder := mailbox_model.NormalizeFolder(opts.LocalFolder)
+	if localFolder == "" {
+		localFolder = mailbox_model.FolderInbox
+	}
 	for _, user := range localUsers {
-		if err := storeEnvelope(ctx, user, mailbox_model.FolderInbox, raw, env, false); err != nil {
+		if err := storeEnvelope(ctx, user, localFolder, raw, env, false); err != nil {
 			return nil, err
 		}
 		result.LocalUsers++
 	}
 
-	for _, recipient := range handlerRecipients {
-		handled, err := incoming_service.HandleReaderForAddress(ctx, bytes.NewReader(raw), recipient)
-		if err != nil {
-			return nil, err
+	if !opts.SkipHandlers {
+		for _, recipient := range handlerRecipients {
+			handled, err := incoming_service.HandleReaderForAddress(ctx, bytes.NewReader(raw), recipient)
+			if err != nil {
+				return nil, err
+			}
+			result.Handled = result.Handled || handled
 		}
-		result.Handled = result.Handled || handled
 	}
 
 	if len(remote) > 0 {
@@ -439,6 +534,10 @@ func ComposeAndSend(ctx context.Context, user *user_model.User, to, cc, bcc []st
 	raw, err := BuildMessage(user.DisplayName(), from, to, cc, bcc, subject, body, attachments)
 	if err != nil {
 		return nil, err
+	}
+	raw, err = SignOutboundDKIM(raw)
+	if err != nil {
+		return nil, fmt.Errorf("sign outgoing message with DKIM: %w", err)
 	}
 	result, err := DeliverRaw(ctx, from, allRecipients, raw, true)
 	if err != nil {

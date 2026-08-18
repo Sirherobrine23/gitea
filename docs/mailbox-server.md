@@ -23,6 +23,26 @@ MAX_MESSAGE_SIZE = 26214400
 MAX_RECIPIENTS = 100
 DEFAULT_QUOTA = 0
 
+# Role and fallback recipients. Both name a Gitea username and are optional.
+POSTMASTER_USER = admin
+CATCH_ALL_USER =
+
+# Outbound DKIM signing. DKIM_DOMAIN defaults to DOMAIN.
+DKIM_ENABLED = true
+DKIM_DOMAIN = git.example.com
+DKIM_SELECTOR = gitea
+DKIM_PRIVATE_KEY_FILE = /etc/gitea/mail/dkim.key
+DKIM_HEADER_CANONICALIZATION = relaxed
+DKIM_BODY_CANONICALIZATION = relaxed
+
+# Inbound sender authentication.
+VERIFY_DKIM = true
+VERIFY_SPF = true
+VERIFY_DMARC = true
+DMARC_ENFORCE = true
+DMARC_DEFER_ON_TEMPFAIL = true
+DMARC_QUARANTINE_TO_JUNK = true
+
 [email.incoming]
 ENABLED = true
 LOCAL_DELIVERY = true
@@ -33,15 +53,63 @@ With `ALLOW_INSECURE_AUTH = false`, authenticated SMTP submission and IMAP requi
 
 Each active individual Gitea account owns `<username>@DOMAIN`. Activated Gitea email addresses on the hosted domain are also accepted as inbound aliases. Additional aliases can be managed at `/mail/settings`.
 
+## Recipient resolution
+
+An inbound local recipient is matched in this order:
+
+1. the tokenized `[email.incoming]` reply address, when `LOCAL_DELIVERY` is enabled;
+2. the Gitea username, after stripping any `+tag` sub-address;
+3. a mailbox alias from `/mail/settings`, first for the full local-part and then for the base local-part;
+4. an activated Gitea email address on the hosted domain;
+5. `POSTMASTER_USER` for `postmaster@` and `abuse@`, which RFC 2142 requires a public domain to accept;
+6. `CATCH_ALL_USER` for anything still unmatched.
+
+An account name always outranks an alias, so a later registration cannot have its mail captured by an alias created earlier. Adding an alias that collides with an existing username or Gitea email address is refused. With both `POSTMASTER_USER` and `CATCH_ALL_USER` empty, unknown recipients are rejected with `550 5.1.1` at RCPT time, which is the safer default for an Internet-exposed listener.
+
+## DKIM, SPF and DMARC
+
+Outbound messages produced by the webmail, authenticated SMTP submission, and the normal Gitea mailer path are signed with `github.com/emersion/go-msgauth/dkim` when `DKIM_ENABLED` is true. The private key can be RSA (PKCS#1 or PKCS#8 PEM) or Ed25519 (PKCS#8 PEM). Keep the private-key file restricted to the Gitea service account.
+
+Inbound Internet SMTP delivery is evaluated before Gitea adds its own `Received` or `Authentication-Results` fields, so DKIM verification sees the original RFC 5322 wire representation. DKIM and DMARC use `github.com/emersion/go-msgauth`; SPF uses `blitiri.com.ar/go/spf`.
+
+The receiver writes its results into a new `Authentication-Results` header. DMARC evaluation implements both accepted alignment paths:
+
+- aligned SPF (`smtp.mailfrom`/HELO against RFC5322.From, according to `aspf`), or
+- a passing aligned DKIM signature (`d=` against RFC5322.From, according to `adkim`).
+
+DMARC policy discovery checks the exact RFC5322.From domain and then its organizational domain using the public suffix list. When the organizational-domain policy is inherited, `sp=` is honored for subdomains. `pct=` is applied to quarantine/reject enforcement.
+
+With `DMARC_ENFORCE = true`:
+
+- `p=reject`/`sp=reject` failure returns SMTP `550 5.7.1`;
+- `p=quarantine`/`sp=quarantine` failure is accepted into `Junk` when `DMARC_QUARANTINE_TO_JUNK = true`;
+- a temporary DNS/authentication failure that prevents DMARC evaluation returns `451 4.7.5` when `DMARC_DEFER_ON_TEMPFAIL = true`;
+- `p=none` records are recorded but not rejected/quarantined.
+
+DMARC-quarantined mail is not dispatched into Gitea's tokenized reply-by-email action handler. This prevents a message classified for quarantine from mutating an issue or pull request.
+
+### DNS records
+
+At minimum publish the MX/A/AAAA records for inbound delivery and the sender-authentication records appropriate to the domain. For example, with selector `gitea` the DKIM public key is published at:
+
+```text
+gitea._domainkey.git.example.com. TXT "v=DKIM1; k=rsa; p=..."
+```
+
+SPF and DMARC are normal DNS TXT records, for example:
+
+```text
+git.example.com.        TXT "v=spf1 mx -all"
+_dmarc.git.example.com. TXT "v=DMARC1; p=reject; adkim=r; aspf=r; pct=100"
+```
+
+The exact SPF policy must describe the systems that really emit mail for your domain. If `[mailer]` relays through a separate provider, that provider must be represented in SPF as appropriate. Configure PTR/rDNS for the SMTP egress host as well.
+
 ## Existing Gitea mail integration
 
-When `[mailer]` is enabled, Gitea-generated messages are partitioned before sending. Recipients hosted by `[mailbox] DOMAIN` are written directly to their local mailbox; other recipients continue through the configured Gitea mailer transport.
+When `[mailer]` is enabled, Gitea-generated messages are partitioned before sending. Recipients hosted by `[mailbox] DOMAIN` are written directly to their local mailbox; other recipients continue through the configured Gitea mailer transport. DKIM signing happens before this partition, so the same signed RFC 5322 message is used for both local and remote copies.
 
 When `[email.incoming] LOCAL_DELIVERY = true`, tokenized reply-by-email addresses are consumed directly by the integrated SMTP listener. The existing incoming-mail token decoder and issue/pull-request handlers are reused; the external IMAP polling loop is disabled.
-
-## DNS
-
-For Internet delivery, publish an MX record for `DOMAIN` that resolves to `HOSTNAME`, and publish A/AAAA records for `HOSTNAME`. Configure PTR/rDNS and the normal sender-authentication records required by your outbound relay/provider as appropriate.
 
 ## Storage
 
@@ -58,4 +126,4 @@ The raw RFC 5322 message is retained for IMAP and `.eml` download. Parsed envelo
 
 The integrated server implements the mailbox-facing SMTP/ESMTP path (including STARTTLS, AUTH PLAIN/LOGIN, local recipient validation, authenticated relay, size/recipient limits and null reverse paths) and an IMAP4 server backed by the same database storage. HTML mail is sanitized before rendering in the authenticated web UI.
 
-Remote-domain outbound delivery deliberately uses the existing `[mailer]` transport rather than implementing DNS MX resolution and direct-to-MX queueing. DKIM signing, SPF/DMARC evaluation, reputation/greylisting, antivirus and spam filtering are therefore expected to be supplied by the configured outbound/inbound edge when those controls are required for an Internet-exposed production deployment.
+Remote-domain outbound delivery deliberately uses the existing `[mailer]` transport rather than implementing DNS MX resolution, an outbound retry queue, bounce processing, reputation/greylisting, antivirus or content-spam filtering. DKIM signing plus inbound DKIM/SPF/DMARC authentication are native, but a production Internet mail deployment still needs correct DNS, abuse controls and any desired spam/virus filtering at the deployment boundary.

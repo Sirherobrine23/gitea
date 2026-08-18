@@ -258,7 +258,7 @@ func (m *imapMailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.F
 		if seqSet != nil && !seqSet.Contains(id) {
 			continue
 		}
-		fetched, markSeen, err := fetchIMAPMessage(stored, seqNum, items)
+		fetched, markSeen, err := fetchIMAPMessage(stored, seqNum, items, m.rawLoader(stored.ID))
 		if err != nil {
 			return err
 		}
@@ -274,19 +274,43 @@ func (m *imapMailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.F
 	return nil
 }
 
-func fetchIMAPMessage(stored *mailbox_model.Message, seqNum uint32, items []imap.FetchItem) (*imap.Message, bool, error) {
+// rawLoader returns a loader that reads one message body at most once per FETCH,
+// so flag-only and UID-only fetches never touch the raw blob at all.
+func (m *imapMailbox) rawLoader(messageID int64) func() ([]byte, error) {
+	var (
+		raw    []byte
+		err    error
+		loaded bool
+	)
+	return func() ([]byte, error) {
+		if !loaded {
+			raw, err = mailbox_model.GetMessageRaw(m.ctx, m.user.ID, messageID)
+			loaded = true
+		}
+		return raw, err
+	}
+}
+
+func fetchIMAPMessage(stored *mailbox_model.Message, seqNum uint32, items []imap.FetchItem, loadRaw func() ([]byte, error)) (*imap.Message, bool, error) {
 	fetched := imap.NewMessage(seqNum, items)
 	markSeen := false
+	parse := func() (textproto.Header, io.Reader, error) {
+		raw, err := loadRaw()
+		if err != nil {
+			return textproto.Header{}, nil, err
+		}
+		return headerAndBody(raw)
+	}
 	for _, item := range items {
 		switch item {
 		case imap.FetchEnvelope:
-			hdr, _, err := headerAndBody(stored.Raw)
+			hdr, _, err := parse()
 			if err != nil {
 				return nil, false, err
 			}
 			fetched.Envelope, _ = backendutil.FetchEnvelope(hdr)
 		case imap.FetchBody, imap.FetchBodyStructure:
-			hdr, body, err := headerAndBody(stored.Raw)
+			hdr, body, err := parse()
 			if err != nil {
 				return nil, false, err
 			}
@@ -304,7 +328,7 @@ func fetchIMAPMessage(stored *mailbox_model.Message, seqNum uint32, items []imap
 			if err != nil {
 				continue
 			}
-			hdr, body, err := headerAndBody(stored.Raw)
+			hdr, body, err := parse()
 			if err != nil {
 				return nil, false, err
 			}
@@ -334,7 +358,11 @@ func (m *imapMailbox) SearchMessages(uid bool, criteria *imap.SearchCriteria) ([
 	}
 	ids := make([]uint32, 0)
 	for i, stored := range msgs {
-		entity, err := message.Read(bytes.NewReader(stored.Raw))
+		raw, err := mailbox_model.GetMessageRaw(m.ctx, m.user.ID, stored.ID)
+		if err != nil {
+			continue
+		}
+		entity, err := message.Read(bytes.NewReader(raw))
 		if err != nil {
 			continue
 		}
