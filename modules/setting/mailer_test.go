@@ -1,4 +1,4 @@
-// Copyright 2022 The Gitea Authors. All rights reserved.
+// Copyright 2026 The Gitea Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 
 package setting
@@ -6,65 +6,50 @@ package setting
 import (
 	"testing"
 
-	"gitea.dev/modules/test"
-
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func Test_loadMailerFrom(t *testing.T) {
-	kases := map[string]*Mailer{
-		"smtp.mydomain.test": {
-			SMTPAddr: "smtp.mydomain.test",
-			SMTPPort: "465",
-		},
-		"smtp.mydomain.test:123": {
-			SMTPAddr: "smtp.mydomain.test",
-			SMTPPort: "123",
-		},
-		":123": {
-			SMTPAddr: "127.0.0.1",
-			SMTPPort: "123",
-		},
+func TestLoadMailboxOnlyMailer(t *testing.T) {
+	restore := func(service *Mailer, enabled bool, domain string) func() {
+		return func() { MailService, MailboxServer.Enabled, MailboxServer.Domain = service, enabled, domain }
 	}
-	for host, kase := range kases {
-		t.Run(host, func(t *testing.T) {
-			cfg, _ := NewConfigProviderFromData("")
-			sec := cfg.Section("mailer")
-			sec.NewKey("ENABLED", "true")
-			sec.NewKey("HOST", host)
 
-			// Check mailer setting
-			loadMailerFrom(cfg)
+	t.Run("MailboxOnly", func(t *testing.T) {
+		t.Cleanup(restore(MailService, MailboxServer.Enabled, MailboxServer.Domain))
+		MailService = nil
+		MailboxServer.Enabled, MailboxServer.Domain = true, "git.example.com"
 
-			assert.Equal(t, kase.SMTPAddr, MailService.SMTPAddr)
-			assert.Equal(t, kase.SMTPPort, MailService.SMTPPort)
-		})
-	}
-}
+		loadMailboxOnlyMailer()
 
-func TestLoadSettingsForInstallMailServiceFlags(t *testing.T) {
-	defer test.MockVariableValue(&Service)()
-	defer test.MockVariableValue(&MailService)()
+		// Mail composition reads MailService throughout, so it must exist even
+		// when no [mailer] transport is configured.
+		require.NotNil(t, MailService)
+		assert.Equal(t, MailerProtocolMailbox, MailService.Protocol)
+		assert.Equal(t, "gitea@git.example.com", MailService.FromEmail)
+		assert.Contains(t, MailService.From, "gitea@git.example.com")
+		assert.NotNil(t, MailService.OverrideHeader)
+	})
 
-	cfg, err := NewConfigProviderFromData(`
-[database]
-DB_TYPE = postgres
+	t.Run("DoesNotOverrideConfiguredMailer", func(t *testing.T) {
+		t.Cleanup(restore(MailService, MailboxServer.Enabled, MailboxServer.Domain))
+		configured := &Mailer{Protocol: "smtp", FromEmail: "real@example.com"}
+		MailService = configured
+		MailboxServer.Enabled = true
 
-[mailer]
-ENABLED = true
-SMTP_ADDR = 127.0.0.1
-SMTP_PORT = 465
-FROM = noreply@example.com
+		loadMailboxOnlyMailer()
 
-[service]
-REGISTER_EMAIL_CONFIRM = true
-ENABLE_NOTIFY_MAIL = true
-`)
-	assert.NoError(t, err)
-	loadDBSetting(cfg)
-	loadServiceFrom(cfg)
-	loadMailsFrom(cfg)
+		assert.Same(t, configured, MailService, "a configured [mailer] must win")
+		assert.Equal(t, "smtp", MailService.Protocol)
+	})
 
-	assert.True(t, Service.RegisterEmailConfirm)
-	assert.True(t, Service.EnableNotifyMail)
+	t.Run("MailboxDisabled", func(t *testing.T) {
+		t.Cleanup(restore(MailService, MailboxServer.Enabled, MailboxServer.Domain))
+		MailService = nil
+		MailboxServer.Enabled = false
+
+		loadMailboxOnlyMailer()
+
+		assert.Nil(t, MailService, "no mail service without either transport")
+	})
 }

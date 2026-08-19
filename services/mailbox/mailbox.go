@@ -377,7 +377,7 @@ func SendRemote(ctx context.Context, senderID int64, envelopeFrom string, recipi
 		}
 		return nil
 	}
-	if setting.MailService == nil {
+	if setting.MailService == nil || setting.MailService.Protocol == setting.MailerProtocolMailbox {
 		return errors.New("cannot relay external mail: OUTBOUND_MODE is relay but [mailer] is not enabled")
 	}
 	var relay sender_service.Sender

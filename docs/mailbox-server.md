@@ -154,7 +154,13 @@ Direct mode requires the operator to look like a legitimate sender: a static egr
 
 Gitea-generated messages are partitioned before sending. Recipients hosted by `[mailbox] DOMAIN` are written directly to their local mailbox; other recipients follow `OUTBOUND_MODE`. DKIM signing happens before this partition, so the same signed RFC 5322 message is used for both local and remote copies.
 
-Because the integrated server can carry Gitea's own notifications, `[mailer]` may be omitted entirely: password resets, registration confirmations, team invites and notification mail all work with `[mailbox]` alone.
+Because the integrated server can carry Gitea's own notifications, `[mailer]` may be omitted entirely: password resets, registration confirmations, team invites and notification mail all work with `[mailbox]` alone. Gitea composes mail from the `[mailer]` settings even when it does not send through them, so a mailbox-only instance gets a synthesized configuration whose sender is `gitea@DOMAIN`; set `[mailer] FROM` if you want a different one.
+
+### Notifications in the webmail
+
+Gitea addresses a notification to the recipient's account email. When that address is on `[mailbox] DOMAIN` — for example when the account email is `<username>@DOMAIN` — the message is written straight into that account's `INBOX`, so issue and pull-request notifications are readable in the webmail and over IMAP alongside ordinary mail, and replying to one goes through the normal reply-by-email path.
+
+An account whose email is on some other domain keeps receiving notifications there instead; the mailbox server does not copy them locally.
 
 When `[email.incoming] LOCAL_DELIVERY = true`, tokenized reply-by-email addresses are consumed directly by the integrated SMTP listener. The existing incoming-mail token decoder and issue/pull-request handlers are reused; the external IMAP polling loop is disabled.
 

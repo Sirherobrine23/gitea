@@ -42,7 +42,9 @@ func NewContext(ctx context.Context) {
 		notify_service.RegisterNotifier(NewNotifier())
 	}
 
-	if setting.MailService != nil {
+	// A mailbox-only MailService describes no transport, so there is no upstream
+	// sender to build; the mailbox-aware sender below carries everything.
+	if setting.MailService != nil && setting.MailService.Protocol != setting.MailerProtocolMailbox {
 		switch setting.MailService.Protocol {
 		case "sendmail":
 			sender = &sender_service.SendmailSender{}

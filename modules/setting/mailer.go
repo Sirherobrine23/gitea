@@ -5,6 +5,7 @@ package setting
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/mail"
 	"strings"
@@ -59,12 +60,38 @@ type Mailer struct {
 // MailService the global mailer
 var MailService *Mailer
 
+// MailerProtocolMailbox marks a MailService that has no [mailer] transport
+// behind it: the integrated mailbox server carries the mail instead.
+const MailerProtocolMailbox = "mailbox"
+
 func loadMailsFrom(rootCfg ConfigProvider) {
 	loadMailerFrom(rootCfg)
 	loadMailboxServerFrom(rootCfg)
+	loadMailboxOnlyMailer()
 	loadRegisterMailFrom(rootCfg)
 	loadNotifyMailFrom(rootCfg)
 	loadIncomingEmailFrom(rootCfg)
+}
+
+// loadMailboxOnlyMailer synthesizes a MailService when only the mailbox server
+// is configured. Gitea's mail composition reads MailService throughout — the
+// From address, the subject prefix, header overrides — so leaving it nil while
+// mail is still being sent would panic on the first notification.
+func loadMailboxOnlyMailer() {
+	if MailService != nil || !MailboxServer.Enabled {
+		return
+	}
+	domain := MailboxServer.Domain
+	if domain == "" {
+		domain = Domain
+	}
+	MailService = &Mailer{
+		Protocol:       MailerProtocolMailbox,
+		FromName:       AppName,
+		FromEmail:      "gitea@" + domain,
+		From:           fmt.Sprintf("%s <gitea@%s>", AppName, domain),
+		OverrideHeader: make(map[string][]string),
+	}
 }
 
 func loadMailerFrom(rootCfg ConfigProvider) {
