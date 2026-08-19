@@ -4,6 +4,7 @@
 package incoming
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -18,8 +19,8 @@ import (
 	"gitea.dev/modules/setting"
 	"gitea.dev/services/mailer/token"
 
-	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/client"
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/jhillyerd/enmime/v2"
 )
 
@@ -58,27 +59,46 @@ func Init(ctx context.Context) error {
 func processIncomingEmails(ctx context.Context) error {
 	server := fmt.Sprintf("%s:%d", setting.IncomingEmail.Host, setting.IncomingEmail.Port)
 
-	var c *client.Client
-	var err error
+	// The server announces new mail as unilateral data while the client idles.
+	// The handler is registered for the connection's lifetime, so it signals a
+	// channel that waitForUpdates waits on.
+	mailboxUpdates := make(chan struct{}, 1)
+	options := &imapclient.Options{
+		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+			Mailbox: func(*imapclient.UnilateralDataMailbox) {
+				select {
+				case mailboxUpdates <- struct{}{}:
+				default:
+				}
+			},
+		},
+	}
+
+	var (
+		c   *imapclient.Client
+		err error
+	)
 	if setting.IncomingEmail.UseTLS {
-		c, err = client.DialTLS(server, &tls.Config{InsecureSkipVerify: setting.IncomingEmail.SkipTLSVerify})
+		options.TLSConfig = &tls.Config{InsecureSkipVerify: setting.IncomingEmail.SkipTLSVerify} //nolint:gosec // configured by SKIP_TLS_VERIFY
+		c, err = imapclient.DialTLS(server, options)
 	} else {
-		c, err = client.Dial(server)
+		c, err = imapclient.DialInsecure(server, options)
 	}
 	if err != nil {
 		return fmt.Errorf("could not connect to server '%s': %w", server, err)
 	}
+	defer c.Close()
 
-	if err := c.Login(setting.IncomingEmail.Username, setting.IncomingEmail.Password); err != nil {
+	if err := c.Login(setting.IncomingEmail.Username, setting.IncomingEmail.Password).Wait(); err != nil {
 		return fmt.Errorf("could not login: %w", err)
 	}
 	defer func() {
-		if err := c.Logout(); err != nil {
+		if err := c.Logout().Wait(); err != nil {
 			log.Error("Logout from incoming email server failed: %v", err)
 		}
 	}()
 
-	if _, err := c.Select(setting.IncomingEmail.Mailbox, false); err != nil {
+	if _, err := c.Select(setting.IncomingEmail.Mailbox, nil).Wait(); err != nil {
 		return fmt.Errorf("selecting box '%s' failed: %w", setting.IncomingEmail.Mailbox, err)
 	}
 
@@ -93,7 +113,7 @@ func processIncomingEmails(ctx context.Context) error {
 			if err := processMessages(ctx, c); err != nil {
 				return fmt.Errorf("could not process messages: %w", err)
 			}
-			if err := waitForUpdates(ctx, c); err != nil {
+			if err := waitForUpdates(ctx, c, mailboxUpdates); err != nil {
 				return fmt.Errorf("wait for updates failed: %w", err)
 			}
 			select {
@@ -106,120 +126,88 @@ func processIncomingEmails(ctx context.Context) error {
 }
 
 // waitForUpdates uses IMAP IDLE to wait for new emails
-func waitForUpdates(ctx context.Context, c *client.Client) error {
-	updates := make(chan client.Update, 1)
-
-	c.Updates = updates
-	defer func() {
-		c.Updates = nil
-	}()
-
-	errs := make(chan error, 1)
-	stop := make(chan struct{})
-	go func() {
-		errs <- c.Idle(stop, nil)
-	}()
-
-	stopped := false
-	for {
-		select {
-		case update := <-updates:
-			switch update.(type) {
-			case *client.MailboxUpdate:
-				if !stopped {
-					close(stop)
-					stopped = true
-				}
-			default:
-			}
-		case err := <-errs:
-			if err != nil {
-				return fmt.Errorf("imap idle failed: %w", err)
-			}
-			return nil
-		case <-ctx.Done():
-			return nil
-		}
+func waitForUpdates(ctx context.Context, c *imapclient.Client, mailboxUpdates <-chan struct{}) error {
+	idle, err := c.Idle()
+	if err != nil {
+		return fmt.Errorf("imap idle failed: %w", err)
 	}
+
+	// Any mailbox update means there may be mail to process: stop idling and let
+	// the caller run another search.
+	select {
+	case <-mailboxUpdates:
+	case <-ctx.Done():
+	}
+	if err := idle.Close(); err != nil {
+		return fmt.Errorf("imap idle close failed: %w", err)
+	}
+	return nil
 }
 
 // processMessages searches unread mails and processes them.
-func processMessages(ctx context.Context, c *client.Client) error {
-	criteria := imap.NewSearchCriteria()
-	criteria.WithoutFlags = []string{imap.SeenFlag}
-	criteria.Smaller = setting.IncomingEmail.MaximumMessageSize
-	ids, err := c.Search(criteria)
+func processMessages(ctx context.Context, c *imapclient.Client) error {
+	criteria := &imap.SearchCriteria{
+		NotFlag: []imap.Flag{imap.FlagSeen},
+	}
+	if setting.IncomingEmail.MaximumMessageSize > 0 {
+		criteria.Smaller = int64(setting.IncomingEmail.MaximumMessageSize)
+	}
+	searchData, err := c.UIDSearch(criteria, nil).Wait()
 	if err != nil {
 		return fmt.Errorf("imap search failed: %w", err)
 	}
-
-	if len(ids) == 0 {
+	uids, ok := searchData.All.(imap.UIDSet)
+	if !ok || len(uids) == 0 {
 		return nil
 	}
 
-	seqset := new(imap.SeqSet)
-	seqset.AddNum(ids...)
-	messages := make(chan *imap.Message, 10)
+	section := &imap.FetchItemBodySection{Peek: true}
+	fetchCmd := c.Fetch(uids, &imap.FetchOptions{
+		UID:         true,
+		BodySection: []*imap.FetchItemBodySection{section},
+	})
+	defer fetchCmd.Close()
 
-	section := &imap.BodySectionName{}
-
-	errs := make(chan error, 1)
-	go func() {
-		errs <- c.Fetch(
-			seqset,
-			[]imap.FetchItem{section.FetchItem()},
-			messages,
-		)
-	}()
-
-	handledSet := new(imap.SeqSet)
-loop:
+	var handled imap.UIDSet
 	for {
-		select {
-		case <-ctx.Done():
-			break loop
-		case msg, ok := <-messages:
-			if !ok {
-				if setting.IncomingEmail.DeleteHandledMessage && !handledSet.Empty() {
-					if err := c.Store(
-						handledSet,
-						imap.FormatFlagsOp(imap.AddFlags, true),
-						[]any{imap.DeletedFlag},
-						nil,
-					); err != nil {
-						return fmt.Errorf("imap store failed: %w", err)
-					}
+		if ctx.Err() != nil {
+			return nil
+		}
+		msg := fetchCmd.Next()
+		if msg == nil {
+			break
+		}
+		buffer, err := msg.Collect()
+		if err != nil {
+			return fmt.Errorf("imap fetch failed: %w", err)
+		}
 
-					if err := c.Expunge(nil); err != nil {
-						return fmt.Errorf("imap expunge failed: %w", err)
-					}
-				}
-				return nil
-			}
-
-			err := func() error {
-				r := msg.GetBody(section)
-				if r == nil {
-					return errors.New("could not get body from message")
-				}
-
-				handled, err := HandleReader(ctx, r)
-				if err != nil {
-					return err
-				}
-				if handled {
-					handledSet.AddNum(msg.SeqNum)
-				}
-				return nil
-			}()
-			if err != nil {
-				log.Error("Error while processing incoming email[%v]: %v", msg.Uid, err)
-			}
+		body := buffer.FindBodySection(section)
+		if body == nil {
+			log.Error("Error while processing incoming email[%v]: could not get body from message", buffer.UID)
+			continue
+		}
+		wasHandled, err := HandleReader(ctx, bytes.NewReader(body))
+		if err != nil {
+			log.Error("Error while processing incoming email[%v]: %v", buffer.UID, err)
+			continue
+		}
+		if wasHandled {
+			handled.AddNum(buffer.UID)
 		}
 	}
-
-	if err := <-errs; err != nil {
+	if err := fetchCmd.Close(); err != nil {
 		return fmt.Errorf("imap fetch failed: %w", err)
+	}
+
+	if setting.IncomingEmail.DeleteHandledMessage && len(handled) > 0 {
+		storeFlags := &imap.StoreFlags{Op: imap.StoreFlagsAdd, Silent: true, Flags: []imap.Flag{imap.FlagDeleted}}
+		if err := c.Store(handled, storeFlags, nil).Close(); err != nil {
+			return fmt.Errorf("imap store failed: %w", err)
+		}
+		if err := c.Expunge().Close(); err != nil {
+			return fmt.Errorf("imap expunge failed: %w", err)
+		}
 	}
 
 	return nil

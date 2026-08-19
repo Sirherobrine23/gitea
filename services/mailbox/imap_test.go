@@ -5,58 +5,90 @@ package mailbox
 
 import (
 	"testing"
-	"time"
 
 	mailbox_model "gitea.dev/models/mailbox"
 
-	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/backend"
+	"github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestPublishIMAPUpdateNeverBlocks(t *testing.T) {
-	original := imapUpdates
-	t.Cleanup(func() { imapUpdates = original })
+func TestMessageFlags(t *testing.T) {
+	assert.Empty(t, messageFlags(&mailbox_model.Message{}))
 
-	// With no IMAP listener running there is nothing to notify.
-	imapUpdates = nil
-	assert.False(t, publishIMAPUpdate(backend.NewUpdate("alice", "INBOX")))
-
-	imapUpdates = make(chan backend.Update, 1)
-	assert.True(t, publishIMAPUpdate(backend.NewUpdate("alice", "INBOX")))
-
-	// A consumer that has stopped reading must not stall mail delivery: the
-	// second update is dropped rather than blocking the caller.
-	done := make(chan bool, 1)
-	go func() { done <- publishIMAPUpdate(backend.NewUpdate("alice", "INBOX")) }()
-	select {
-	case queued := <-done:
-		assert.False(t, queued, "a full buffer must drop, not block")
-	case <-time.After(2 * time.Second):
-		t.Fatal("publishIMAPUpdate blocked on a full buffer")
+	flags := messageFlags(&mailbox_model.Message{Seen: true, Answered: true, Flagged: true, Deleted: true, Draft: true})
+	for _, want := range supportedIMAPFlags() {
+		assert.True(t, hasFlag(flags, want), "%v missing", want)
 	}
 }
 
-func TestFillMailboxStatusCounts(t *testing.T) {
-	folder := &mailbox_model.Folder{UIDValidity: 7, UIDNext: 11}
-	msgs := []*mailbox_model.Message{
-		{Seen: true, Recent: false},
-		{Seen: false, Recent: true},
-		{Seen: false, Recent: true},
-	}
-	status := imap.NewMailboxStatus("INBOX", []imap.StatusItem{
-		imap.StatusMessages, imap.StatusRecent, imap.StatusUnseen,
-		imap.StatusUidNext, imap.StatusUidValidity,
-	})
-	fillMailboxStatus(status, folder, msgs)
+func TestApplyStore(t *testing.T) {
+	current := []imap.Flag{imap.FlagSeen}
 
-	assert.Equal(t, uint32(3), status.Messages)
-	assert.Equal(t, uint32(2), status.Recent)
-	assert.Equal(t, uint32(2), status.Unseen)
-	// UNSEEN reports the sequence number of the first unseen message, 1-based.
-	assert.Equal(t, uint32(2), status.UnseenSeqNum)
-	assert.Equal(t, uint32(7), status.UidValidity)
-	assert.Equal(t, uint32(11), status.UidNext)
-	require.NotEmpty(t, status.Flags)
+	added := applyStore(current, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.FlagFlagged}})
+	assert.True(t, hasFlag(added, imap.FlagSeen))
+	assert.True(t, hasFlag(added, imap.FlagFlagged))
+
+	removed := applyStore(added, &imap.StoreFlags{Op: imap.StoreFlagsDel, Flags: []imap.Flag{imap.FlagSeen}})
+	assert.False(t, hasFlag(removed, imap.FlagSeen))
+	assert.True(t, hasFlag(removed, imap.FlagFlagged))
+
+	// SET replaces the whole set rather than merging into it.
+	set := applyStore(added, &imap.StoreFlags{Op: imap.StoreFlagsSet, Flags: []imap.Flag{imap.FlagDraft}})
+	assert.Equal(t, []imap.Flag{imap.FlagDraft}, set)
+
+	// Flags the mailbox does not support are not invented into the result.
+	unknown := applyStore(nil, &imap.StoreFlags{Op: imap.StoreFlagsAdd, Flags: []imap.Flag{imap.Flag("\\Custom")}})
+	assert.Empty(t, unknown)
+}
+
+func TestSpecialUseAttr(t *testing.T) {
+	// RFC 6154 attributes are how a client knows which folder is Sent or Trash.
+	assert.Equal(t, imap.MailboxAttrSent, specialUseAttr("Sent"))
+	assert.Equal(t, imap.MailboxAttrTrash, specialUseAttr("trash"))
+	assert.Equal(t, imap.MailboxAttrJunk, specialUseAttr(mailbox_model.FolderJunk))
+	assert.Equal(t, imap.MailboxAttrDrafts, specialUseAttr("Drafts"))
+	assert.Equal(t, imap.MailboxAttrArchive, specialUseAttr("Archive"))
+	// INBOX has no special-use attribute, and neither do user folders.
+	assert.Empty(t, specialUseAttr("INBOX"))
+	assert.Empty(t, specialUseAttr("Projects/Gitea"))
+}
+
+func TestStaticNumRange(t *testing.T) {
+	// "*" is encoded as 0 and must resolve to the last message.
+	start, stop := uint32(2), uint32(0)
+	staticNumRange(&start, &stop, 9)
+	assert.Equal(t, uint32(2), start)
+	assert.Equal(t, uint32(9), stop)
+
+	// A range written "*:2" arrives reversed and must be normalized.
+	start, stop = 0, 2
+	staticNumRange(&start, &stop, 9)
+	assert.Equal(t, uint32(2), start)
+	assert.Equal(t, uint32(9), stop)
+
+	// A fully static range is left alone.
+	start, stop = 3, 5
+	staticNumRange(&start, &stop, 9)
+	assert.Equal(t, uint32(3), start)
+	assert.Equal(t, uint32(5), stop)
+}
+
+func TestTrackerRefCounting(t *testing.T) {
+	key := mailboxKey{userID: 4242, folder: "INBOX"}
+	t.Cleanup(func() {
+		trackers.Lock()
+		delete(trackers.m, key)
+		trackers.Unlock()
+	})
+
+	first := acquireTracker(key, 0)
+	second := acquireTracker(key, 0)
+	assert.Same(t, first, second, "sessions on one folder must share a tracker")
+	assert.Same(t, first, lookupTracker(key))
+
+	// The tracker only goes away once the last session releases it.
+	releaseTracker(key)
+	assert.Same(t, first, lookupTracker(key))
+	releaseTracker(key)
+	assert.Nil(t, lookupTracker(key), "an unwatched folder keeps no tracker")
 }

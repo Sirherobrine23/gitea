@@ -178,9 +178,9 @@ Two unrelated IMAP features are both called "subscription" by mail clients:
 - **Folder subscription** (`SUBSCRIBE`/`UNSUBSCRIBE`/`LSUB`) chooses which folders a client displays. It is stored per account and per folder.
 - **New-mail notification** is IMAP `IDLE` (RFC 2177): the client holds a connection open and the server tells it when the selected folder changes, instead of the client polling.
 
-Both work. `IDLE` is served by `go-imap`, but the push only happens because the backend offers an update channel — a server that accepts `IDLE` without one leaves clients waiting until their own timeout, which is worse than polling. Delivering a message publishes a mailbox update for its owner, so a client idling on that folder is told immediately.
+Both work. `IDLE` and `NOOP` polling are served by `go-imap/v2`, which models them as a `MailboxTracker` per folder and a `SessionTracker` per connection. One tracker is kept for each folder that has a session selected on it, and it is dropped once the last session leaves, so an idle instance holds no per-folder state. Delivering, copying or moving a message queues an update on the tracker for the affected folder, and every session watching it — including one parked in `IDLE` — is told immediately.
 
-Updates are queued without blocking: mail delivery never waits on a slow or stalled IMAP consumer, and a dropped update only costs the push, since the next poll or `SELECT` still reports the message.
+The trackers also give each session a stable view of sequence numbers, so an expunge in one connection does not shift the numbering another connection is mid-command on.
 
 Clients that do not use `IDLE` are unaffected and keep polling.
 
@@ -192,7 +192,7 @@ The protocol layers are provided by the `github.com/emersion` mail stack rather 
 | --- | --- |
 | SMTP/ESMTP server (STARTTLS, AUTH, SIZE, line and message limits, DATA transparency) | `github.com/emersion/go-smtp` |
 | SASL mechanisms | `github.com/emersion/go-sasl` |
-| IMAP4rev1 server, including IDLE | `github.com/emersion/go-imap` |
+| IMAP4rev2 server and client | `github.com/emersion/go-imap/v2` |
 | DKIM, DMARC, Authentication-Results | `github.com/emersion/go-msgauth` |
 | MIME parsing | `github.com/emersion/go-message`, `github.com/jhillyerd/enmime` |
 | SPF | `blitiri.com.ar/go/spf` |
@@ -201,6 +201,6 @@ Gitea supplies only the parts that are specific to it: the session backends, rec
 
 ## Limitations
 
-The integrated server covers the mailbox-facing SMTP path (local recipient validation, authenticated relay and null reverse paths) and an IMAP4 server backed by the same database storage. HTML mail is sanitized before rendering in the authenticated web UI.
+The integrated server covers the mailbox-facing SMTP path (local recipient validation, authenticated relay and null reverse paths) and an IMAP4rev2 server backed by the same database storage, advertising NAMESPACE, MOVE, UIDPLUS, ESEARCH, LIST-EXTENDED, LIST-STATUS and STATUS=SIZE. HTML mail is sanitized before rendering in the authenticated web UI.
 
 MX resolution, opportunistic TLS, deferral retries and delivery status notices are native. Not implemented: full RFC 3464 DSN bodies (the notice is a plain-text message), inbound greylisting, reputation scoring, antivirus and content-spam filtering. A production Internet deployment still needs correct DNS, abuse controls and any desired spam/virus filtering at the boundary.
