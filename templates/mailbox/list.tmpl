@@ -1,0 +1,46 @@
+{{template "base/head" .}}
+<div role="main" class="page-content user mail-box">
+	<div class="ui container">
+		<div class="ui stackable grid">
+			<div class="four wide column">{{template "mailbox/sidebar" .}}</div>
+			<div class="twelve wide column">
+				<div class="tw-flex tw-items-center tw-gap-2 tw-mb-3">
+					<h2 class="ui header tw-flex-1 tw-m-0">{{.MailboxFolder}}</h2>
+					<form method="get" action="{{AppSubUrl}}/mail" class="tw-flex tw-gap-2">
+						<input type="hidden" name="folder" value="{{.MailboxFolder}}">
+						<div class="ui input"><input name="q" value="{{.MailboxQuery}}" placeholder="{{ctx.Locale.Tr "mailbox.search_placeholder"}}"></div>
+						<button class="ui button" type="submit">{{svg "octicon-search"}} {{ctx.Locale.Tr "mailbox.search"}}</button>
+					</form>
+				</div>
+				<div class="ui segment tw-p-0">
+					{{if .Messages}}
+						<div class="ui divided list tw-m-0">
+						{{range .Messages}}
+							<div class="item tw-p-3{{if not .Seen}} tw-font-semibold{{end}}">
+								<div class="tw-flex tw-items-center tw-gap-3">
+									<form method="post" action="{{AppSubUrl}}/mail/{{.ID}}/action">
+										<input type="hidden" name="action" value="{{if .Flagged}}unflag{{else}}flag{{end}}">
+										<button class="ui basic icon button mini" type="submit" data-tooltip-content="{{if .Flagged}}{{ctx.Locale.Tr "mailbox.unstar"}}{{else}}{{ctx.Locale.Tr "mailbox.star"}}{{end}}">{{if .Flagged}}{{svg "octicon-star-fill"}}{{else}}{{svg "octicon-star"}}{{end}}</button>
+									</form>
+									<a class="tw-flex-1 tw-min-w-0" href="{{AppSubUrl}}/mail/{{.ID}}">
+										<div class="tw-flex tw-gap-2">
+											<span class="tw-w-1/4 tw-truncate">{{if .FromName}}{{.FromName}}{{else}}{{.FromAddress}}{{end}}</span>
+											<span class="tw-flex-1 tw-truncate">{{if .Subject}}{{.Subject}}{{else}}{{ctx.Locale.Tr "mailbox.no_subject"}}{{end}}</span>
+											{{if .HasAttach}}{{svg "octicon-paperclip"}}{{end}}
+											<span class="muted">{{if .SentUnix}}{{DateUtils.TimeSince .SentUnix}}{{else}}{{DateUtils.TimeSince .ReceivedUnix}}{{end}}</span>
+										</div>
+									</a>
+								</div>
+							</div>
+						{{end}}
+						</div>
+					{{else}}
+						<div class="tw-p-8 tw-text-center muted">{{ctx.Locale.Tr "mailbox.no_messages"}}</div>
+					{{end}}
+				</div>
+				{{template "base/paginate" .}}
+			</div>
+		</div>
+	</div>
+</div>
+{{template "base/footer" .}}

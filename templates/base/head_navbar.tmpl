@@ -27,6 +27,9 @@
 				{{end}}
 			{{end}}
 			<a class="item{{if .PageIsExplore}} active{{end}}" href="{{AppSubUrl}}/explore/repos">{{ctx.Locale.Tr "explore_title"}}</a>
+			{{if .MailboxEnabled}}
+				<a class="item{{if .PageIsMailbox}} active{{end}}" href="{{AppSubUrl}}/mail">{{svg "octicon-mail"}} {{ctx.Locale.Tr "mailbox.title"}}</a>
+			{{end}}
 		{{else if .IsLandingPageOrganizations}}
 			<a class="item{{if .PageIsExplore}} active{{end}}" href="{{AppSubUrl}}/explore/organizations">{{ctx.Locale.Tr "explore_title"}}</a>
 		{{else}}

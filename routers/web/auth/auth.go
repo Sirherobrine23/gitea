@@ -776,7 +776,7 @@ func Activate(ctx *context.Context) {
 			return
 		}
 
-		if setting.MailService == nil || !setting.Service.RegisterEmailConfirm {
+		if !mailer.MailEnabled() || !setting.Service.RegisterEmailConfirm {
 			renderActivationPromptMessage(ctx, ctx.Tr("auth.disable_register_mail"))
 			return
 		}

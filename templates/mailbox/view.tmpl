@@ -1,0 +1,59 @@
+{{template "base/head" .}}
+<div role="main" class="page-content user mail-box">
+	<div class="ui container">
+		<div class="ui stackable grid">
+			<div class="four wide column">{{template "mailbox/sidebar" .}}</div>
+			<div class="twelve wide column">
+				<div class="tw-flex tw-items-center tw-gap-2 tw-mb-3">
+					<a class="ui basic button" href="{{AppSubUrl}}/mail?folder={{QueryEscape .Message.Folder}}">{{svg "octicon-arrow-left"}} {{ctx.Locale.Tr "mailbox.back"}}</a>
+					<a class="ui button" href="{{AppSubUrl}}/mail/compose?reply={{.Message.ID}}">{{svg "octicon-reply"}} {{ctx.Locale.Tr "mailbox.reply"}}</a>
+					<form method="post" action="{{AppSubUrl}}/mail/{{.Message.ID}}/action">
+						<input type="hidden" name="action" value="{{if .Message.Flagged}}unflag{{else}}flag{{end}}">
+						<button class="ui basic button" type="submit">{{if .Message.Flagged}}{{svg "octicon-star-fill"}} {{ctx.Locale.Tr "mailbox.unstar"}}{{else}}{{svg "octicon-star"}} {{ctx.Locale.Tr "mailbox.star"}}{{end}}</button>
+					</form>
+					<form method="post" action="{{AppSubUrl}}/mail/{{.Message.ID}}/action">
+						<input type="hidden" name="action" value="delete">
+						<button class="ui basic button" type="submit">{{svg "octicon-trash"}} {{ctx.Locale.Tr "mailbox.delete"}}</button>
+					</form>
+					<form class="ui form" method="post" action="{{AppSubUrl}}/mail/{{.Message.ID}}/action">
+						<input type="hidden" name="action" value="move">
+						<div class="inline field tw-m-0">
+							<select name="folder" class="ui dropdown" onchange="this.form.submit()">
+								<option value="">{{ctx.Locale.Tr "mailbox.move_to"}}</option>
+								{{range .MailboxFolders}}{{if ne .Name $.Message.Folder}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
+							</select>
+						</div>
+					</form>
+					<a class="ui basic button" href="{{AppSubUrl}}/mail/{{.Message.ID}}/raw">{{svg "octicon-download"}} {{ctx.Locale.Tr "mailbox.download_eml"}}</a>
+				</div>
+				<div class="ui segment">
+					<h2 class="ui header">{{if .Message.Subject}}{{.Message.Subject}}{{else}}{{ctx.Locale.Tr "mailbox.no_subject"}}{{end}}</h2>
+					<div class="tw-flex tw-gap-2 tw-items-start tw-mb-4">
+						<div class="tw-flex-1">
+							<strong>{{if .Message.FromName}}{{.Message.FromName}}{{else}}{{.Message.FromAddress}}{{end}}</strong>
+							&lt;{{.Message.FromAddress}}&gt;<br>
+							<span class="muted">{{ctx.Locale.Tr "mailbox.to"}}: {{.Message.To}}{{if .Message.Cc}} · {{ctx.Locale.Tr "mailbox.cc"}}: {{.Message.Cc}}{{end}}</span>
+						</div>
+						<div class="muted">{{if .Message.SentUnix}}{{DateUtils.FullTime .Message.SentUnix}}{{else}}{{DateUtils.FullTime .Message.ReceivedUnix}}{{end}}</div>
+					</div>
+					<div class="ui divider"></div>
+					{{if .MailboxHTMLBody}}
+						<div class="mailbox-message-body markup">{{.MailboxHTMLBody}}</div>
+					{{else}}
+						<pre class="tw-whitespace-pre-wrap tw-font-sans">{{.Message.TextBody}}</pre>
+					{{end}}
+					{{if .Attachments}}
+						<div class="ui divider"></div>
+						<h4>{{ctx.Locale.Tr "mailbox.attachments"}}</h4>
+						<div class="ui list">
+						{{range .Attachments}}
+							<a class="item" href="{{AppSubUrl}}/mail/{{$.Message.ID}}/attachment/{{.ID}}">{{svg "octicon-paperclip"}} {{.Filename}} <span class="muted">({{FileSize .Size}})</span></a>
+						{{end}}
+						</div>
+					{{end}}
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+{{template "base/footer" .}}

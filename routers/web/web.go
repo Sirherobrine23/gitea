@@ -32,6 +32,7 @@ import (
 	"gitea.dev/routers/web/explore"
 	"gitea.dev/routers/web/feed"
 	"gitea.dev/routers/web/healthcheck"
+	mailbox_router "gitea.dev/routers/web/mailbox"
 	"gitea.dev/routers/web/misc"
 	"gitea.dev/routers/web/org"
 	"gitea.dev/routers/web/repo"
@@ -803,6 +804,12 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 				m.Post("/remove-all-items", admin.QueueRemoveAllItems)
 			})
 			m.Get("/diagnosis", admin.MonitorDiagnosis)
+		})
+
+		m.Group("/mailbox", func() {
+			m.Get("", admin.Mailbox)
+			m.Post("/aliases", admin.MailboxAddAlias)
+			m.Post("/aliases/delete", admin.MailboxDeleteAlias)
 		})
 
 		m.Group("/users", func() {
@@ -1755,6 +1762,19 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 	// so the CORS handler and OPTIONS method are used.
 	// pattern: "/{username}/{reponame}/{git-paths}": git http support
 	addOwnerRepoGitHTTPRouters(m, repo.HTTPGitEnabledHandler, webAuth.AllowBasic, webAuth.AllowOAuth2, repo.CorsHandler(), optSignInFromAnyOrigin, context.UserAssignmentWeb())
+
+	m.Group("/mail", func() {
+		m.Get("", mailbox_router.List)
+		m.Get("/compose", mailbox_router.Compose)
+		m.Post("/compose", mailbox_router.ComposePost)
+		m.Get("/settings", mailbox_router.Settings)
+		m.Post("/settings/folders", mailbox_router.CreateFolder)
+		m.Post("/settings/folders/delete", mailbox_router.DeleteFolder)
+		m.Get("/{id}", mailbox_router.View)
+		m.Post("/{id}/action", mailbox_router.Action)
+		m.Get("/{id}/raw", mailbox_router.Raw)
+		m.Get("/{id}/attachment/{attachment}", mailbox_router.Attachment)
+	}, reqSignIn)
 
 	m.Group("/notifications", func() {
 		m.Get("", user.Notifications)

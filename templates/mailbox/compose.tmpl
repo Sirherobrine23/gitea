@@ -1,0 +1,26 @@
+{{template "base/head" .}}
+<div role="main" class="page-content user mail-box">
+	<div class="ui container">
+		<div class="ui stackable grid">
+			<div class="four wide column">{{template "mailbox/sidebar" .}}</div>
+			<div class="twelve wide column">
+				<h2 class="ui header">{{ctx.Locale.Tr "mailbox.compose_title"}}</h2>
+				{{if .ComposeError}}<div class="ui negative message">{{.ComposeError}}</div>{{end}}
+				<form class="ui form" method="post" action="{{AppSubUrl}}/mail/compose" enctype="multipart/form-data">
+					<div class="field"><label>{{ctx.Locale.Tr "mailbox.from"}}</label><input value="{{.MailboxAddress}}" readonly></div>
+					<div class="required field"><label>{{ctx.Locale.Tr "mailbox.to"}}</label><input name="to" value="{{.ComposeTo}}" autocomplete="off" placeholder="user@example.com, other@example.com"></div>
+					<div class="two fields">
+						<div class="field"><label>{{ctx.Locale.Tr "mailbox.cc"}}</label><input name="cc" value="{{.ComposeCc}}"></div>
+						<div class="field"><label>{{ctx.Locale.Tr "mailbox.bcc"}}</label><input name="bcc" value="{{.ComposeBcc}}"></div>
+					</div>
+					<div class="field"><label>{{ctx.Locale.Tr "mailbox.subject"}}</label><input name="subject" value="{{.ComposeSubject}}"></div>
+					<div class="field"><label>{{ctx.Locale.Tr "mailbox.body"}}</label><textarea name="body" rows="16">{{.ComposeBody}}</textarea></div>
+					<div class="field"><label>{{ctx.Locale.Tr "mailbox.attachments"}}</label><input type="file" name="attachments" multiple></div>
+					<button class="ui primary button" type="submit">{{svg "octicon-paper-airplane"}} {{ctx.Locale.Tr "mailbox.send"}}</button>
+					<a class="ui button" href="{{AppSubUrl}}/mail">{{ctx.Locale.Tr "mailbox.cancel"}}</a>
+				</form>
+			</div>
+		</div>
+	</div>
+</div>
+{{template "base/footer" .}}

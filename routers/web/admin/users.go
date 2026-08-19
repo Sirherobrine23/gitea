@@ -97,7 +97,7 @@ func NewUser(ctx *context.Context) {
 	}
 	ctx.Data["Sources"] = sources
 
-	ctx.Data["CanSendEmail"] = setting.MailService != nil
+	ctx.Data["CanSendEmail"] = mailer.MailEnabled()
 	ctx.HTML(http.StatusOK, tplUserNew)
 }
 
@@ -118,7 +118,7 @@ func NewUserPost(ctx *context.Context) {
 	}
 	ctx.Data["Sources"] = sources
 
-	ctx.Data["CanSendEmail"] = setting.MailService != nil
+	ctx.Data["CanSendEmail"] = mailer.MailEnabled()
 
 	if ctx.HasError() {
 		ctx.HTML(http.StatusOK, tplUserNew)

@@ -1,0 +1,9 @@
+diff a/services/mailer/mail_issue.go b/services/mailer/mail_issue.go	(rejected hunks)
+@@ -15,7 +15,6 @@ import (
+ 	user_model "gitea.dev/models/user"
+ 	"gitea.dev/modules/container"
+ 	"gitea.dev/modules/log"
+-	"gitea.dev/modules/setting"
+ )
+ 
+ const MailBatchSize = 100 // batch size used in mailIssueCommentBatch

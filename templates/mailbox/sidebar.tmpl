@@ -1,0 +1,13 @@
+<div class="ui vertical secondary menu tw-w-full">
+	<a class="ui primary button tw-mb-3" href="{{AppSubUrl}}/mail/compose">{{svg "octicon-pencil"}} {{ctx.Locale.Tr "mailbox.compose"}}</a>
+	{{range .MailboxFolders}}
+		<a class="item{{if eq $.MailboxFolder .Name}} active{{end}}" href="{{AppSubUrl}}/mail?folder={{QueryEscape .Name}}">
+			{{if eq .Name "INBOX"}}{{svg "octicon-inbox"}}{{else if eq .Name "Sent"}}{{svg "octicon-paper-airplane"}}{{else if eq .Name "Drafts"}}{{svg "octicon-file"}}{{else if eq .Name "Trash"}}{{svg "octicon-trash"}}{{else if eq .Name "Archive"}}{{svg "octicon-archive"}}{{else}}{{svg "octicon-mail"}}{{end}}
+			{{.Name}}
+			{{if and (eq .Name "INBOX") (gt $.MailboxUnread 0)}}<div class="ui tiny label">{{$.MailboxUnread}}</div>{{end}}
+		</a>
+	{{end}}
+	<div class="divider"></div>
+	<a class="item" href="{{AppSubUrl}}/mail/settings">{{svg "octicon-gear"}} {{ctx.Locale.Tr "mailbox.settings"}}</a>
+	<div class="item muted tw-break-all">{{.MailboxAddress}}</div>
+</div>

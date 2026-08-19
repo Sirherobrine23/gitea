@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	net_mail "net/mail"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ import (
 )
 
 func Init(ctx context.Context) error {
-	if !setting.IncomingEmail.Enabled {
+	if !setting.IncomingEmail.Enabled || setting.IncomingEmail.LocalDelivery {
 		return nil
 	}
 	go func() {
@@ -202,44 +203,13 @@ loop:
 					return errors.New("could not get body from message")
 				}
 
-				env, err := enmime.ReadEnvelope(r)
+				handled, err := HandleReader(ctx, r)
 				if err != nil {
-					return fmt.Errorf("could not read envelope: %w", err)
-				}
-
-				if isAutomaticReply(env) {
-					log.Debug("Skipping automatic email reply")
-					return nil
-				}
-
-				t := searchTokenInHeaders(env)
-				if t == "" {
-					log.Debug("Incoming email token not found in headers")
-					return nil
-				}
-
-				handlerType, user, payload, err := token.DecodeToken(ctx, t)
-				if err != nil {
-					if _, ok := err.(*token.ErrToken); ok {
-						log.Info("Invalid incoming email token: %v", err)
-						return nil
-					}
 					return err
 				}
-
-				handler, ok := handlers[handlerType]
-				if !ok {
-					return fmt.Errorf("unexpected handler type: %v", handlerType)
+				if handled {
+					handledSet.AddNum(msg.SeqNum)
 				}
-
-				content := getContentFromMailReader(env)
-
-				if err := handler.Handle(ctx, content, user, payload); err != nil {
-					return fmt.Errorf("could not handle message: %w", err)
-				}
-
-				handledSet.AddNum(msg.SeqNum)
-
 				return nil
 			}()
 			if err != nil {
@@ -252,6 +222,94 @@ loop:
 		return fmt.Errorf("imap fetch failed: %w", err)
 	}
 
+	return nil
+}
+
+// HandleReader parses and dispatches a Gitea tokenized incoming message. It returns
+// true only when a registered incoming-mail handler consumed the message. SMTP local
+// delivery uses this entry point so reply-by-email does not need an external IMAP hop.
+func HandleReader(ctx context.Context, r io.Reader) (bool, error) {
+	env, err := enmime.ReadEnvelope(r)
+	if err != nil {
+		return false, fmt.Errorf("could not read envelope: %w", err)
+	}
+	return HandleEnvelope(ctx, env)
+}
+
+// HandleEnvelope dispatches an already parsed message to the reply/unsubscribe handler.
+func HandleEnvelope(ctx context.Context, env *enmime.Envelope) (bool, error) {
+	return handleEnvelopeToken(ctx, env, searchTokenInHeaders(env))
+}
+
+// HandleReaderForAddress dispatches a message using the SMTP envelope recipient.
+// This makes local delivery work even when the tokenized recipient is not present
+// in the RFC 5322 To header (for example after forwarding or Bcc delivery).
+func HandleReaderForAddress(ctx context.Context, r io.Reader, address string) (bool, error) {
+	env, err := enmime.ReadEnvelope(r)
+	if err != nil {
+		return false, fmt.Errorf("could not read envelope: %w", err)
+	}
+	return handleEnvelopeToken(ctx, env, handlerTokenFromAddress(address))
+}
+
+func handleEnvelopeToken(ctx context.Context, env *enmime.Envelope, t string) (bool, error) {
+	if isAutomaticReply(env) {
+		log.Debug("Skipping automatic email reply")
+		return false, nil
+	}
+	if t == "" {
+		return false, nil
+	}
+
+	handlerType, user, payload, err := token.DecodeToken(ctx, t)
+	if err != nil {
+		if _, ok := err.(*token.ErrToken); ok {
+			log.Info("Invalid incoming email token: %v", err)
+			return false, nil
+		}
+		return false, err
+	}
+
+	handler, ok := handlers[handlerType]
+	if !ok {
+		return false, fmt.Errorf("unexpected handler type: %v", handlerType)
+	}
+	if err := handler.Handle(ctx, getContentFromMailReader(env), user, payload); err != nil {
+		return false, fmt.Errorf("could not handle message: %w", err)
+	}
+	return true, nil
+}
+
+func handlerTokenFromAddress(address string) string {
+	if !setting.IncomingEmail.Enabled || setting.IncomingEmail.ReplyToAddress == "" {
+		return ""
+	}
+	prefix, suffix, ok := strings.Cut(setting.IncomingEmail.ReplyToAddress, setting.IncomingEmailTokenPlaceholder)
+	if !ok {
+		return ""
+	}
+	return extractToken(address, prefix, suffix)
+}
+
+// IsHandlerAddress reports whether address matches the configured tokenized reply-to pattern.
+func IsHandlerAddress(address string) bool {
+	return handlerTokenFromAddress(address) != ""
+}
+
+// ValidateHandlerAddress verifies that a tokenized SMTP recipient decodes to a
+// currently registered Gitea incoming-email handler.
+func ValidateHandlerAddress(ctx context.Context, address string) error {
+	t := handlerTokenFromAddress(address)
+	if t == "" {
+		return errors.New("address is not a Gitea incoming-email handler address")
+	}
+	handlerType, _, _, err := token.DecodeToken(ctx, t)
+	if err != nil {
+		return err
+	}
+	if _, ok := handlers[handlerType]; !ok {
+		return fmt.Errorf("unexpected handler type: %v", handlerType)
+	}
 	return nil
 }
 

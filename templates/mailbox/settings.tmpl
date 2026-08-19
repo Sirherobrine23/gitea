@@ -1,0 +1,50 @@
+{{template "base/head" .}}
+<div role="main" class="page-content user mail-box">
+	<div class="ui container">
+		<div class="ui stackable grid">
+			<div class="four wide column">{{template "mailbox/sidebar" .}}</div>
+			<div class="twelve wide column">
+				<h2 class="ui header">{{ctx.Locale.Tr "mailbox.settings"}}</h2>
+				<div class="ui segment">
+					<h3 class="ui header">{{ctx.Locale.Tr "mailbox.address"}}</h3>
+					<p><code>{{.MailboxAddress}}</code></p>
+					<p class="muted">{{ctx.Locale.Tr "mailbox.address_help"}}</p>
+				</div>
+				<div class="ui segment">
+					<h3 class="ui header">{{ctx.Locale.Tr "mailbox.folders"}}</h3>
+					<form class="ui form tw-mb-4" method="post" action="{{AppSubUrl}}/mail/settings/folders">
+						<div class="inline fields">
+							<div class="field"><input name="name" required maxlength="255" placeholder="Projects/Gitea"></div>
+							<div class="field"><button class="ui primary button" type="submit">{{ctx.Locale.Tr "mailbox.create_folder"}}</button></div>
+						</div>
+					</form>
+					<div class="ui divided list">
+					{{range .MailboxCustomFolders}}
+						<div class="item tw-flex tw-items-center">
+							<div class="content tw-flex-1">{{.Name}}</div>
+							<form method="post" action="{{AppSubUrl}}/mail/settings/folders/delete">
+								<input type="hidden" name="name" value="{{.Name}}">
+								<button class="ui basic red mini button" type="submit">{{ctx.Locale.Tr "mailbox.delete"}}</button>
+							</form>
+						</div>
+					{{else}}
+						<div class="item muted">{{ctx.Locale.Tr "mailbox.no_custom_folders"}}</div>
+					{{end}}
+					</div>
+				</div>
+				<div class="ui segment">
+					<h3 class="ui header">{{ctx.Locale.Tr "mailbox.aliases"}}</h3>
+					<p class="muted">{{ctx.Locale.Tr "mailbox.aliases_admin_managed"}}</p>
+					<div class="ui divided list">
+					{{range .MailboxAliases}}
+						<div class="item"><code>{{.LocalPart}}@{{$.MailboxDomain}}</code></div>
+					{{else}}
+						<div class="item muted">{{ctx.Locale.Tr "mailbox.no_aliases"}}</div>
+					{{end}}
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+</div>
+{{template "base/footer" .}}

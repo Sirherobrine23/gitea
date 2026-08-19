@@ -15,7 +15,6 @@ import (
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/container"
 	"gitea.dev/modules/log"
-	"gitea.dev/modules/setting"
 	"gitea.dev/modules/util"
 )
 
@@ -165,7 +164,7 @@ func mailIssueCommentBatch(ctx context.Context, comment *mailComment, users []*u
 // MailParticipants sends new issue thread created emails to repository watchers
 // and mentioned people.
 func MailParticipants(ctx context.Context, issue *issues_model.Issue, doer *user_model.User, opType activities_model.ActionType, mentions []*user_model.User) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return nil
 	}
@@ -193,7 +192,7 @@ func MailParticipants(ctx context.Context, issue *issues_model.Issue, doer *user
 
 // SendIssueAssignedMail composes and sends issue assigned email
 func SendIssueAssignedMail(ctx context.Context, issue *issues_model.Issue, doer *user_model.User, content string, comment *issues_model.Comment, recipients []*user_model.User) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return nil
 	}

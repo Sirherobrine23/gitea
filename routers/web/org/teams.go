@@ -29,6 +29,7 @@ import (
 	"gitea.dev/services/context"
 	"gitea.dev/services/convert"
 	"gitea.dev/services/forms"
+	"gitea.dev/services/mailer"
 	org_service "gitea.dev/services/org"
 	repo_service "gitea.dev/services/repository"
 )
@@ -174,7 +175,7 @@ func TeamsAction(ctx *context.Context) {
 		u, err = user_model.GetUserByName(ctx, uname)
 		if err != nil {
 			if user_model.IsErrUserNotExist(err) {
-				if setting.MailService != nil && user_model.ValidateEmail(uname) == nil {
+				if mailer.MailEnabled() && user_model.ValidateEmail(uname) == nil {
 					if err := org_service.CreateTeamInvite(ctx, ctx.Doer, ctx.Org.Team, uname); err != nil {
 						if org_model.IsErrTeamInviteAlreadyExist(err) {
 							ctx.Flash.Error(ctx.Tr("form.duplicate_invite_to_team"))
@@ -413,7 +414,7 @@ func TeamMembers(ctx *context.Context) {
 		return
 	}
 	ctx.Data["Invites"] = invites
-	ctx.Data["IsEmailInviteEnabled"] = setting.MailService != nil
+	ctx.Data["IsEmailInviteEnabled"] = mailer.MailEnabled()
 
 	ctx.HTML(http.StatusOK, tplTeamMembers)
 }

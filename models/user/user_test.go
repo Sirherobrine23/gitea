@@ -39,6 +39,7 @@ func TestIsUsableUsername(t *testing.T) {
 	assert.Error(t, user_model.IsUsableUsername("the..repo"))
 	assert.Error(t, user_model.IsUsableUsername("foo.RSS"))
 	assert.Error(t, user_model.IsUsableUsername("foo.PnG"))
+	assert.Error(t, user_model.IsUsableUsername("mail"))
 }
 
 func TestOAuth2Application_LoadUser(t *testing.T) {

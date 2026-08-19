@@ -615,6 +615,7 @@ var (
 		"pulls",
 		"milestones",
 		"notifications",
+		"mail",
 
 		"favicon.ico",
 		"manifest.json", // web app manifests
