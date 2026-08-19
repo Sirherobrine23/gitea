@@ -1,0 +1,69 @@
+{{template "admin/layout_head" (dict "pageClass" "admin mailbox")}}
+	<div class="admin-setting-content">
+		<h4 class="ui top attached header">
+			{{ctx.Locale.Tr "admin.mailbox.alias_panel"}} ({{ctx.Locale.Tr "admin.total" (len .MailboxAliases)}})
+		</h4>
+		<div class="ui attached segment">
+			<p class="muted">{{ctx.Locale.Tr "admin.mailbox.alias_help"}}</p>
+			<form class="ui form" method="post" action="{{AppSubUrl}}/-/admin/mailbox/aliases">
+				<div class="inline fields">
+					<div class="field">
+						<div class="ui right labeled input">
+							<input name="local_part" required placeholder="{{ctx.Locale.Tr "admin.mailbox.alias_local_part"}}">
+							<div class="ui basic label">@{{.MailboxDomain}}</div>
+						</div>
+					</div>
+					<div class="field">
+						<input name="username" required placeholder="{{ctx.Locale.Tr "admin.mailbox.alias_owner"}}">
+					</div>
+					<div class="field">
+						<button class="ui primary button" type="submit">{{ctx.Locale.Tr "admin.mailbox.alias_add"}}</button>
+					</div>
+				</div>
+			</form>
+		</div>
+		<div class="ui attached table segment">
+			<table class="ui very basic striped table unstackable">
+				<thead>
+					<tr>
+						<th>{{ctx.Locale.Tr "admin.mailbox.alias_address"}}</th>
+						<th>{{ctx.Locale.Tr "admin.mailbox.alias_owner"}}</th>
+						<th>{{ctx.Locale.Tr "admin.mailbox.alias_kind"}}</th>
+						<th>{{ctx.Locale.Tr "admin.mailbox.alias_created"}}</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{{range .MailboxAliases}}
+						<tr>
+							<td><code>{{.Alias.LocalPart}}@{{$.MailboxDomain}}</code></td>
+							<td>
+								{{if .Owner}}
+									<a href="{{AppSubUrl}}/-/admin/users/{{.Owner.ID}}">{{.Owner.Name}}</a>
+								{{else}}
+									<span class="muted">{{ctx.Locale.Tr "admin.mailbox.alias_owner_missing"}}</span>
+								{{end}}
+							</td>
+							<td>
+								{{if eq .Alias.Kind "retired"}}
+									<span class="ui grey label" data-tooltip-content="{{ctx.Locale.Tr "admin.mailbox.alias_retired_help"}}">{{ctx.Locale.Tr "admin.mailbox.alias_retired"}}</span>
+								{{else}}
+									<span class="ui basic label">{{ctx.Locale.Tr "admin.mailbox.alias_manual"}}</span>
+								{{end}}
+							</td>
+							<td>{{DateUtils.AbsoluteShort .Alias.CreatedUnix}}</td>
+							<td class="tw-text-right">
+								<form method="post" action="{{AppSubUrl}}/-/admin/mailbox/aliases/delete">
+									<input type="hidden" name="id" value="{{.Alias.ID}}">
+									<button class="ui basic red mini button" type="submit">{{ctx.Locale.Tr "remove"}}</button>
+								</form>
+							</td>
+						</tr>
+					{{else}}
+						<tr><td colspan="5" class="muted">{{ctx.Locale.Tr "admin.mailbox.alias_none"}}</td></tr>
+					{{end}}
+				</tbody>
+			</table>
+		</div>
+	</div>
+{{template "admin/layout_footer" .}}

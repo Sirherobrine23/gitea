@@ -59,20 +59,38 @@ REPLY_TO_ADDRESS = incoming+%{token}@git.example.com
 
 With `ALLOW_INSECURE_AUTH = false`, authenticated SMTP submission and IMAP require a TLS certificate/key pair. Leave a listener empty to disable it. Ports 465 and 993 are implicit TLS; 587 and 143 support STARTTLS when TLS is configured.
 
-Each active individual Gitea account owns `<username>@DOMAIN`. Activated Gitea email addresses on the hosted domain are also accepted as inbound aliases. Additional aliases can be managed at `/mail/settings`.
+Each active individual Gitea account owns `<username>@DOMAIN` unless that local-part is assigned elsewhere. Activated Gitea email addresses on the hosted domain are also accepted as inbound aliases. Additional addresses are assigned by administrators at `/-/admin/mailbox`.
+
+## Address ownership
+
+Addresses are assigned by administrators at `/-/admin/mailbox`. Users can see which addresses reach them at `/mail/settings` but cannot create or remove any: letting a user claim an arbitrary local-part would let them claim someone else's mail identity.
+
+The alias table is the authority for who owns a local-part. An account additionally receives mail at its own username, but only while no assignment claims that local-part.
+
+### Renaming an account
+
+Gitea releases a username when its owner renames, and lets the next account register it. A mail identity must not change hands that way: password resets and confirmations sent by third parties to the old address would land in a stranger's mailbox.
+
+So on rename the old local-part is retained as a `retired` assignment bound to the original account. The consequences are:
+
+- the account keeps receiving mail at both its old and its new address;
+- an account that later registers the freed username does **not** get that address — `AddressForUser` reports no address for it, and mail to it keeps reaching the original owner;
+- an administrator can see these entries on the mailbox page, marked *Former username*, and delete one to release the address deliberately.
+
+Existing messages are stored against the account, never against a name, so nothing already delivered is affected by a rename.
 
 ## Recipient resolution
 
 An inbound local recipient is matched in this order:
 
 1. the tokenized `[email.incoming]` reply address, when `LOCAL_DELIVERY` is enabled;
-2. the Gitea username, after stripping any `+tag` sub-address;
-3. a mailbox alias from `/mail/settings`, first for the full local-part and then for the base local-part;
+2. an address assignment, first for the full local-part and then for the base local-part with any `+tag` stripped;
+3. the Gitea username, after stripping any `+tag` sub-address;
 4. an activated Gitea email address on the hosted domain;
 5. `POSTMASTER_USER` for `postmaster@` and `abuse@`, which RFC 2142 requires a public domain to accept;
 6. `CATCH_ALL_USER` for anything still unmatched.
 
-An account name always outranks an alias, so a later registration cannot have its mail captured by an alias created earlier. Adding an alias that collides with an existing username or Gitea email address is refused. With both `POSTMASTER_USER` and `CATCH_ALL_USER` empty, unknown recipients are rejected with `550 5.1.1` at RCPT time, which is the safer default for an Internet-exposed listener.
+With both `POSTMASTER_USER` and `CATCH_ALL_USER` empty, unknown recipients are rejected with `550 5.1.1` at RCPT time, which is the safer default for an Internet-exposed listener.
 
 ## DKIM, SPF and DMARC
 

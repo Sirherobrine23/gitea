@@ -197,6 +197,7 @@ func Contexter() func(next http.Handler) http.Handler {
 			ctx.Data["DisableStars"] = setting.Repository.DisableStars
 			ctx.Data["EnableActions"] = setting.Actions.Enabled && !unit.TypeActions.UnitGlobalDisabled()
 			ctx.Data["MailboxEnabled"] = setting.MailboxServer.Enabled && setting.MailboxServer.WebEnabled
+			ctx.Data["MailboxServerEnabled"] = setting.MailboxServer.Enabled
 
 			ctx.Data["AllLangs"] = translation.AllLangs()
 

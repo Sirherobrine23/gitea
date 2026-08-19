@@ -34,18 +34,10 @@
 				</div>
 				<div class="ui segment">
 					<h3 class="ui header">{{ctx.Locale.Tr "mailbox.aliases"}}</h3>
-					<form class="ui form tw-mb-4" method="post" action="{{AppSubUrl}}/mail/settings/aliases">
-						<div class="inline fields">
-							<div class="field"><div class="ui right labeled input"><input name="local_part" required placeholder="alias"><div class="ui basic label">@{{.MailboxDomain}}</div></div></div>
-							<div class="field"><button class="ui primary button" type="submit">{{ctx.Locale.Tr "mailbox.add_alias"}}</button></div>
-						</div>
-					</form>
+					<p class="muted">{{ctx.Locale.Tr "mailbox.aliases_admin_managed"}}</p>
 					<div class="ui divided list">
 					{{range .MailboxAliases}}
-						<div class="item tw-flex tw-items-center">
-							<div class="content tw-flex-1"><code>{{.LocalPart}}@{{$.MailboxDomain}}</code></div>
-							<form method="post" action="{{AppSubUrl}}/mail/settings/aliases/{{.ID}}/delete"><button class="ui basic red mini button" type="submit">{{ctx.Locale.Tr "mailbox.delete"}}</button></form>
-						</div>
+						<div class="item"><code>{{.LocalPart}}@{{$.MailboxDomain}}</code></div>
 					{{else}}
 						<div class="item muted">{{ctx.Locale.Tr "mailbox.no_aliases"}}</div>
 					{{end}}

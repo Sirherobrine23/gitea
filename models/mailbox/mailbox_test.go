@@ -73,3 +73,18 @@ func TestOutboundRecipientRoundTrip(t *testing.T) {
 	out.SetRecipients(nil)
 	assert.Nil(t, out.RecipientList())
 }
+
+func TestAliasKindsAreDistinct(t *testing.T) {
+	// The admin page and the retirement path key off these values.
+	assert.NotEqual(t, AliasKindManual, AliasKindRetired)
+	assert.Equal(t, "manual", AliasKindManual)
+	assert.Equal(t, "retired", AliasKindRetired)
+}
+
+func TestValidLocalPartGuardsRetirement(t *testing.T) {
+	// RetireLocalPart silently skips names it could never deliver to, so a rename
+	// away from an unusual username cannot fail the rename itself.
+	assert.False(t, validLocalPart("has space"))
+	assert.False(t, validLocalPart("UPPER"))
+	assert.True(t, validLocalPart("old-name"))
+}

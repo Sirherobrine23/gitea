@@ -50,7 +50,7 @@ func prepareCommon(ctx *context.Context) bool {
 	ctx.Data["PageIsMailbox"] = true
 	ctx.Data["MailboxFolders"] = folders
 	ctx.Data["MailboxUnread"] = unread
-	ctx.Data["MailboxAddress"] = mailbox_service.AddressForUser(ctx.Doer)
+	ctx.Data["MailboxAddress"] = mailbox_service.AddressForUser(ctx, ctx.Doer)
 	return true
 }
 
@@ -345,29 +345,6 @@ func DeleteFolder(ctx *context.Context) {
 		ctx.Flash.Error(err.Error())
 	} else {
 		ctx.Flash.Success("Mail folder deleted")
-	}
-	ctx.Redirect(setting.AppSubURL + "/mail/settings")
-}
-
-func AddAlias(ctx *context.Context) {
-	if !prepareCommon(ctx) {
-		return
-	}
-	if err := mailbox_service.AddAlias(ctx, ctx.Doer, ctx.FormString("local_part")); err != nil {
-		ctx.Flash.Error(err.Error())
-	} else {
-		ctx.Flash.Success("Email alias added")
-	}
-	ctx.Redirect(setting.AppSubURL + "/mail/settings")
-}
-
-func DeleteAlias(ctx *context.Context) {
-	if !prepareCommon(ctx) {
-		return
-	}
-	if err := mailbox_model.DeleteAlias(ctx, ctx.Doer.ID, ctx.PathParamInt64("id")); err != nil {
-		ctx.ServerError("DeleteAlias", err)
-		return
 	}
 	ctx.Redirect(setting.AppSubURL + "/mail/settings")
 }

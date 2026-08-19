@@ -63,11 +63,19 @@ func Domain() string {
 	return strings.ToLower(strings.TrimSpace(setting.MailboxServer.Domain))
 }
 
-func AddressForUser(user *user_model.User) string {
+// AddressForUser returns the account's own address, or "" when it has none.
+// A username only yields an address when no alias claims that local-part: after
+// a rename the old local-part stays bound to its original owner, so an account
+// that later claims the freed username does not inherit their mail identity.
+func AddressForUser(ctx context.Context, user *user_model.User) string {
 	if user == nil {
 		return ""
 	}
-	return strings.ToLower(user.Name) + "@" + Domain()
+	local := strings.ToLower(user.Name)
+	if owner, claimed, err := mailbox_model.LocalPartOwner(ctx, local); err == nil && claimed && owner != user.ID {
+		return ""
+	}
+	return local + "@" + Domain()
 }
 
 func IsLocalAddress(address string) bool {
@@ -96,21 +104,22 @@ func ResolveRecipient(ctx context.Context, address string) (*user_model.User, er
 		baseLocal = baseLocal[:i]
 	}
 
-	// An account name always wins over an alias. AddAlias rejects local-parts that
-	// collide with a username, but an account registered after the alias would
-	// otherwise have its own mail silently delivered to the alias owner.
-	if user, err := user_model.GetIndividualUserByName(ctx, baseLocal); err == nil {
-		if !user.IsActive || user.ProhibitLogin {
-			return nil, ErrNotLocalRecipient
-		}
-		return user, nil
-	}
-
+	// The alias table is the authority for who owns an address. Only an
+	// administrator can write to it, so it cannot be used to shadow an account,
+	// and a local-part retired by a rename keeps reaching its original owner
+	// instead of whoever claims the freed username next.
 	if alias, err := mailbox_model.FindAlias(ctx, local); err == nil {
 		return deliverableUser(ctx, alias.UserID)
 	}
 	if alias, err := mailbox_model.FindAlias(ctx, baseLocal); err == nil {
 		return deliverableUser(ctx, alias.UserID)
+	}
+
+	if user, err := user_model.GetIndividualUserByName(ctx, baseLocal); err == nil {
+		if !user.IsActive || user.ProhibitLogin {
+			return nil, ErrNotLocalRecipient
+		}
+		return user, nil
 	}
 
 	// Also allow a verified Gitea address on the hosted domain to be used as an
@@ -220,7 +229,7 @@ func SenderAllowed(ctx context.Context, user *user_model.User, from string) bool
 	if err != nil {
 		return false
 	}
-	if strings.EqualFold(parsed.Address, AddressForUser(user)) {
+	if own := AddressForUser(ctx, user); own != "" && strings.EqualFold(parsed.Address, own) {
 		return true
 	}
 	if IsLocalAddress(parsed.Address) {
@@ -515,8 +524,14 @@ func AddAlias(ctx context.Context, user *user_model.User, localPart string) erro
 	if incoming_service.IsHandlerAddress(address) {
 		return errors.New("alias conflicts with the Gitea incoming-email handler")
 	}
-	if existing, err := user_model.GetIndividualUserByName(ctx, localPart); err == nil && existing != nil {
+	if existing, err := user_model.GetIndividualUserByName(ctx, localPart); err == nil && existing != nil && existing.ID != user.ID {
 		return errors.New("alias conflicts with an existing Gitea username")
+	}
+	if owner, claimed, err := mailbox_model.LocalPartOwner(ctx, localPart); err == nil && claimed {
+		if owner == user.ID {
+			return errors.New("the account already owns this address")
+		}
+		return errors.New("address is already assigned to another account")
 	}
 	if existing, err := user_model.GetUserByEmail(ctx, address); err == nil && existing != nil {
 		return errors.New("alias conflicts with an existing Gitea email address")
@@ -549,7 +564,7 @@ func ComposeAndSend(ctx context.Context, user *user_model.User, to, cc, bcc []st
 	if len(allRecipients) == 0 {
 		return nil, errors.New("at least one recipient is required")
 	}
-	from := AddressForUser(user)
+	from := AddressForUser(ctx, user)
 	raw, err := BuildMessage(user.DisplayName(), from, to, cc, bcc, subject, body, attachments)
 	if err != nil {
 		return nil, err

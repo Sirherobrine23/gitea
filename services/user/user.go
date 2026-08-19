@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gitea.dev/models/db"
+	mailbox_model "gitea.dev/models/mailbox"
 	"gitea.dev/models/organization"
 	packages_model "gitea.dev/models/packages"
 	repo_model "gitea.dev/models/repo"
@@ -81,6 +82,15 @@ func RenameUser(ctx context.Context, u *user_model.User, newUserName string, doe
 
 	if err = user_model.NewUserRedirect(ctx, u.ID, oldUserName, newUserName); err != nil {
 		return err
+	}
+
+	// Gitea frees the old username for anyone to register, but a mail identity
+	// must not change hands: keep the old local-part bound to this account so a
+	// future account with that name cannot receive its mail.
+	if setting.MailboxServer.Enabled && !u.IsOrganization() {
+		if err = mailbox_model.RetireLocalPart(ctx, u.ID, oldUserName); err != nil {
+			return fmt.Errorf("retire mailbox local-part %q: %w", oldUserName, err)
+		}
 	}
 
 	if err := agit.UserNameChanged(ctx, u, newUserName); err != nil {

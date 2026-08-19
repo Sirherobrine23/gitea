@@ -810,6 +810,12 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 			m.Get("/diagnosis", admin.MonitorDiagnosis)
 		})
 
+		m.Group("/mailbox", func() {
+			m.Get("", admin.Mailbox)
+			m.Post("/aliases", admin.MailboxAddAlias)
+			m.Post("/aliases/delete", admin.MailboxDeleteAlias)
+		})
+
 		m.Group("/users", func() {
 			m.Get("", admin.Users)
 			m.Combo("/new").Get(admin.NewUser).Post(web.Bind[*forms.AdminCreateUserForm](), admin.NewUserPost)
@@ -1770,8 +1776,6 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 		m.Get("/settings", mailbox_router.Settings)
 		m.Post("/settings/folders", mailbox_router.CreateFolder)
 		m.Post("/settings/folders/delete", mailbox_router.DeleteFolder)
-		m.Post("/settings/aliases", mailbox_router.AddAlias)
-		m.Post("/settings/aliases/{id}/delete", mailbox_router.DeleteAlias)
 		m.Get("/{id}", mailbox_router.View)
 		m.Post("/{id}/action", mailbox_router.Action)
 		m.Get("/{id}/raw", mailbox_router.Raw)

@@ -372,13 +372,13 @@ func notifyOutboundFailure(ctx context.Context, out *mailbox_model.Outbound, rec
 	}
 	body := fmt.Sprintf("Delivery to the following recipients failed permanently:\r\n\r\n%s\r\n\r\nReason: %s\r\nDetail: %s\r\n",
 		strings.Join(recipients, "\r\n"), reason, cause)
-	notice := buildDeliveryStatusNotice(user, out, body)
+	notice := buildDeliveryStatusNotice(ctx, user, out, body)
 	if _, err := StoreRaw(ctx, user, mailbox_model.FolderInbox, notice, false); err != nil {
 		log.Error("Mailbox outbound: cannot store delivery failure notice for user %d: %v", out.UserID, err)
 	}
 }
 
-func buildDeliveryStatusNotice(user *user_model.User, out *mailbox_model.Outbound, body string) []byte {
+func buildDeliveryStatusNotice(ctx context.Context, user *user_model.User, out *mailbox_model.Outbound, body string) []byte {
 	header := fmt.Sprintf("From: Mail Delivery Subsystem <postmaster@%s>\r\n"+
 		"To: %s\r\n"+
 		"Subject: Undelivered mail returned to sender\r\n"+
@@ -387,7 +387,7 @@ func buildDeliveryStatusNotice(user *user_model.User, out *mailbox_model.Outboun
 		"Auto-Submitted: auto-replied\r\n"+
 		"Content-Type: text/plain; charset=utf-8\r\n"+
 		"\r\n",
-		Domain(), AddressForUser(user), time.Now().Format(time.RFC1123Z), out.ID, time.Now().UnixNano(), Domain())
+		Domain(), AddressForUser(ctx, user), time.Now().Format(time.RFC1123Z), out.ID, time.Now().UnixNano(), Domain())
 	return []byte(header + body)
 }
 

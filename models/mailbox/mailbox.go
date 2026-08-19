@@ -102,11 +102,24 @@ type MailFolder struct {
 	UpdatedUnix timeutil.TimeStamp `xorm:"updated NOT NULL"`
 }
 
-// Alias maps an additional local-part to a Gitea account.
+// Alias kinds. Both deliver to the owning account; the kind records where the
+// binding came from and drives what an administrator may do with it.
+const (
+	// AliasKindManual is an address an administrator assigned to an account.
+	AliasKindManual = "manual"
+	// AliasKindRetired is the local-part an account used before it was renamed.
+	// It keeps that mail identity bound to the original owner, so a new account
+	// that later claims the freed username cannot receive their mail.
+	AliasKindRetired = "retired"
+)
+
+// Alias binds a local-part to a Gitea account. This table is authoritative for
+// address ownership: a username only yields an address when no alias claims it.
 type MailAlias struct {
 	ID          int64              `xorm:"pk autoincr"`
 	UserID      int64              `xorm:"INDEX NOT NULL"`
 	LocalPart   string             `xorm:"UNIQUE VARCHAR(255) NOT NULL"`
+	Kind        string             `xorm:"VARCHAR(16) NOT NULL DEFAULT 'manual'"`
 	CreatedUnix timeutil.TimeStamp `xorm:"created NOT NULL"`
 }
 
@@ -678,12 +691,53 @@ func UnreadCount(ctx context.Context, userID int64) (int64, error) {
 }
 
 func AddAlias(ctx context.Context, userID int64, localPart string) error {
+	return addAliasOfKind(ctx, userID, localPart, AliasKindManual)
+}
+
+func addAliasOfKind(ctx context.Context, userID int64, localPart, kind string) error {
 	localPart = strings.ToLower(strings.TrimSpace(localPart))
 	if !validLocalPart(localPart) {
 		return errors.New("invalid mailbox alias")
 	}
-	_, err := db.GetEngine(ctx).Insert(&Alias{UserID: userID, LocalPart: localPart})
+	_, err := db.GetEngine(ctx).Insert(&Alias{UserID: userID, LocalPart: localPart, Kind: kind})
 	return err
+}
+
+// RetireLocalPart binds a local-part an account is giving up to that same
+// account, so the address keeps reaching its original owner and cannot be
+// inherited by whoever claims the freed username next. It is a no-op when the
+// local-part is already claimed, which covers a rename back and forth.
+func RetireLocalPart(ctx context.Context, userID int64, localPart string) error {
+	localPart = strings.ToLower(strings.TrimSpace(localPart))
+	if !validLocalPart(localPart) {
+		return nil
+	}
+	has, err := db.GetEngine(ctx).Where("local_part = ?", localPart).Exist(new(Alias))
+	if err != nil || has {
+		return err
+	}
+	return addAliasOfKind(ctx, userID, localPart, AliasKindRetired)
+}
+
+// ListAllAliases returns every address binding, for the administration page.
+func ListAllAliases(ctx context.Context) ([]*Alias, error) {
+	aliases := make([]*Alias, 0, 32)
+	return aliases, db.GetEngine(ctx).Asc("local_part").Find(&aliases)
+}
+
+// DeleteAliasByID removes a binding regardless of owner, for administrators.
+func DeleteAliasByID(ctx context.Context, id int64) error {
+	_, err := db.GetEngine(ctx).Where("id = ?", id).Delete(new(Alias))
+	return err
+}
+
+// LocalPartOwner reports which account owns a local-part, if any.
+func LocalPartOwner(ctx context.Context, localPart string) (int64, bool, error) {
+	alias, err := FindAlias(ctx, localPart)
+	if err != nil {
+		return 0, false, nil
+	}
+	return alias.UserID, true, nil
 }
 
 func DeleteAlias(ctx context.Context, userID, id int64) error {
