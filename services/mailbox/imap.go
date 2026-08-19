@@ -30,6 +30,8 @@ import (
 
 const imapDelimiter = "/"
 
+var _ backend.BackendUpdater = (*imapBackend)(nil)
+
 type imapBackend struct {
 	ctx context.Context
 }
@@ -51,7 +53,18 @@ var (
 	_ backend.Mailbox = (*imapMailbox)(nil)
 )
 
+// imapUpdates carries unilateral updates to connected IMAP sessions. go-imap
+// only starts its broadcast loop when the backend offers this channel, so
+// without it a client that entered IDLE would sit there until its own timeout
+// and never learn that mail arrived. It is buffered and published to without
+// blocking: dropping an update only costs a client the push, since the next
+// poll or SELECT still sees the message, whereas blocking would stall delivery.
+var imapUpdates chan backend.Update
+
+const imapUpdateBuffer = 64
+
 func initIMAP(ctx context.Context, tlsConfig *tls.Config) error {
+	imapUpdates = make(chan backend.Update, imapUpdateBuffer)
 	backend := &imapBackend{ctx: ctx}
 	if addr := strings.TrimSpace(setting.MailboxServer.IMAPListen); addr != "" {
 		server := newIMAPServer(backend, tlsConfig)
@@ -98,6 +111,82 @@ func serveIMAP(ctx context.Context, server *imapserver.Server, ln net.Listener) 
 	}()
 	if err := server.Serve(ln); err != nil && ctx.Err() == nil {
 		log.Error("Mailbox IMAP server stopped: %v", err)
+	}
+}
+
+// Updates implements backend.BackendUpdater, which is what enables IDLE pushes.
+func (b *imapBackend) Updates() <-chan backend.Update {
+	return imapUpdates
+}
+
+// NotifyMailboxUpdate tells any session watching a folder that its contents
+// changed, so an IDLE client is told about new mail as it is delivered.
+func NotifyMailboxUpdate(ctx context.Context, user *user_model.User, folder string) {
+	if imapUpdates == nil || user == nil {
+		return
+	}
+	status, err := mailboxStatus(ctx, user.ID, mailbox_model.NormalizeFolder(folder))
+	if err != nil {
+		log.Debug("Mailbox IMAP: cannot build update for user %d folder %q: %v", user.ID, folder, err)
+		return
+	}
+	if !publishIMAPUpdate(&backend.MailboxUpdate{
+		Update:        backend.NewUpdate(user.Name, status.Name),
+		MailboxStatus: status,
+	}) {
+		log.Debug("Mailbox IMAP: update buffer is full, dropping notification for user %d", user.ID)
+	}
+}
+
+// publishIMAPUpdate queues an update without ever blocking the caller, which is
+// a mail delivery. It reports whether the update was queued.
+func publishIMAPUpdate(update backend.Update) bool {
+	if imapUpdates == nil {
+		return false
+	}
+	select {
+	case imapUpdates <- update:
+		return true
+	default:
+		return false
+	}
+}
+
+// mailboxStatus reports the counters a client needs to notice new mail.
+func mailboxStatus(ctx context.Context, userID int64, name string) (*imap.MailboxStatus, error) {
+	folder, err := mailbox_model.GetFolder(ctx, userID, name)
+	if err != nil {
+		return nil, err
+	}
+	msgs, err := mailbox_model.ListFolderMessages(ctx, userID, name)
+	if err != nil {
+		return nil, err
+	}
+	status := imap.NewMailboxStatus(name, []imap.StatusItem{
+		imap.StatusMessages, imap.StatusRecent, imap.StatusUnseen,
+		imap.StatusUidNext, imap.StatusUidValidity,
+	})
+	fillMailboxStatus(status, folder, msgs)
+	return status, nil
+}
+
+// fillMailboxStatus applies the folder counters shared by STATUS and IDLE pushes.
+func fillMailboxStatus(status *imap.MailboxStatus, folder *mailbox_model.Folder, msgs []*mailbox_model.Message) {
+	status.Flags = supportedIMAPFlags()
+	status.PermanentFlags = []string{imap.SeenFlag, imap.AnsweredFlag, imap.FlaggedFlag, imap.DeletedFlag, imap.DraftFlag}
+	status.UidValidity = folder.UIDValidity
+	status.UidNext = folder.UIDNext
+	status.Messages = uint32(len(msgs))
+	for i, msg := range msgs {
+		if !msg.Seen {
+			status.Unseen++
+			if status.UnseenSeqNum == 0 {
+				status.UnseenSeqNum = uint32(i + 1)
+			}
+		}
+		if msg.Recent {
+			status.Recent++
+		}
 	}
 }
 
@@ -208,22 +297,7 @@ func (m *imapMailbox) Status(items []imap.StatusItem) (*imap.MailboxStatus, erro
 		return nil, err
 	}
 	status := imap.NewMailboxStatus(m.name, items)
-	status.Flags = supportedIMAPFlags()
-	status.PermanentFlags = []string{imap.SeenFlag, imap.AnsweredFlag, imap.FlaggedFlag, imap.DeletedFlag, imap.DraftFlag}
-	status.UidValidity = folder.UIDValidity
-	for i, msg := range msgs {
-		if !msg.Seen {
-			status.Unseen++
-			if status.UnseenSeqNum == 0 {
-				status.UnseenSeqNum = uint32(i + 1)
-			}
-		}
-		if msg.Recent {
-			status.Recent++
-		}
-	}
-	status.UidNext = folder.UIDNext
-	status.Messages = uint32(len(msgs))
+	fillMailboxStatus(status, folder, msgs)
 	return status, nil
 }
 

@@ -484,6 +484,9 @@ func storeEnvelopeReturn(ctx context.Context, user *user_model.User, folder stri
 	if err := mailbox_model.InsertMessage(ctx, msg, attachments); err != nil {
 		return nil, err
 	}
+	// Tell any IMAP session idling on this folder, so a client learns about the
+	// message as it lands instead of at its next poll.
+	NotifyMailboxUpdate(ctx, user, msg.Folder)
 	return msg, nil
 }
 

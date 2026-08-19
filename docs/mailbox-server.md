@@ -171,6 +171,19 @@ The raw RFC 5322 message is retained for IMAP and `.eml` download. Parsed envelo
 
 ## Protocol and security scope
 
+## Client notifications
+
+Two unrelated IMAP features are both called "subscription" by mail clients:
+
+- **Folder subscription** (`SUBSCRIBE`/`UNSUBSCRIBE`/`LSUB`) chooses which folders a client displays. It is stored per account and per folder.
+- **New-mail notification** is IMAP `IDLE` (RFC 2177): the client holds a connection open and the server tells it when the selected folder changes, instead of the client polling.
+
+Both work. `IDLE` is served by `go-imap`, but the push only happens because the backend offers an update channel — a server that accepts `IDLE` without one leaves clients waiting until their own timeout, which is worse than polling. Delivering a message publishes a mailbox update for its owner, so a client idling on that folder is told immediately.
+
+Updates are queued without blocking: mail delivery never waits on a slow or stalled IMAP consumer, and a dropped update only costs the push, since the next poll or `SELECT` still reports the message.
+
+Clients that do not use `IDLE` are unaffected and keep polling.
+
 ## Libraries
 
 The protocol layers are provided by the `github.com/emersion` mail stack rather than hand-written:
@@ -179,7 +192,7 @@ The protocol layers are provided by the `github.com/emersion` mail stack rather 
 | --- | --- |
 | SMTP/ESMTP server (STARTTLS, AUTH, SIZE, line and message limits, DATA transparency) | `github.com/emersion/go-smtp` |
 | SASL mechanisms | `github.com/emersion/go-sasl` |
-| IMAP4rev1 server | `github.com/emersion/go-imap` |
+| IMAP4rev1 server, including IDLE | `github.com/emersion/go-imap` |
 | DKIM, DMARC, Authentication-Results | `github.com/emersion/go-msgauth` |
 | MIME parsing | `github.com/emersion/go-message`, `github.com/jhillyerd/enmime` |
 | SPF | `blitiri.com.ar/go/spf` |
