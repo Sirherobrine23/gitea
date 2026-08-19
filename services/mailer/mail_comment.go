@@ -11,12 +11,11 @@ import (
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/container"
 	"gitea.dev/modules/log"
-	"gitea.dev/modules/setting"
 )
 
 // MailParticipantsComment sends new comment emails to repository watchers and mentioned people.
 func MailParticipantsComment(ctx context.Context, c *issues_model.Comment, opType activities_model.ActionType, issue *issues_model.Issue, mentions []*user_model.User) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return nil
 	}
@@ -40,7 +39,7 @@ func MailParticipantsComment(ctx context.Context, c *issues_model.Comment, opTyp
 
 // MailMentionsComment sends email to users mentioned in a code comment
 func MailMentionsComment(ctx context.Context, pr *issues_model.PullRequest, c *issues_model.Comment, mentions []*user_model.User) (err error) {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return nil
 	}

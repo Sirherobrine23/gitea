@@ -150,7 +150,7 @@ func composeAndSendActionsWorkflowRunStatusEmail(ctx context.Context, repo *repo
 }
 
 func MailActionsTrigger(ctx context.Context, recipient *user_model.User, repo *repo_model.Repository, run *actions_model.ActionRun) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		return nil
 	}
 	if !run.Status.IsDone() || run.Status.IsSkipped() {

@@ -23,7 +23,7 @@ const tplTeamInviteMail templates.TplName = "org/team_invite"
 
 // MailTeamInvite sends team invites
 func MailTeamInvite(ctx context.Context, inviter *user_model.User, team *org_model.Team, invite *org_model.TeamInvite) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		return nil
 	}
 

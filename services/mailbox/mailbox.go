@@ -256,6 +256,9 @@ type DeliveryOptions struct {
 	AllowRelay   bool
 	LocalFolder  string
 	SkipHandlers bool
+	// SenderID owns any delivery status notice raised for this message. Zero for
+	// mail this instance did not originate.
+	SenderID int64
 }
 
 // DeliverRaw stores all local recipient copies, dispatches tokenized Gitea replies,
@@ -346,25 +349,41 @@ func DeliverRawWithOptions(ctx context.Context, envelopeFrom string, recipients 
 	}
 
 	if len(remote) > 0 {
-		if setting.MailService == nil {
-			return nil, errors.New("cannot relay external mail: [mailer] is not enabled")
-		}
-		var relay sender_service.Sender
-		switch setting.MailService.Protocol {
-		case "sendmail":
-			relay = &sender_service.SendmailSender{}
-		case "dummy":
-			relay = &sender_service.DummySender{}
-		default:
-			relay = &sender_service.SMTPSender{}
-		}
-		if err := relay.Send(envelopeFrom, remote, rawMessage(raw)); err != nil {
-			return nil, fmt.Errorf("relay external mail: %w", err)
+		if err := SendRemote(ctx, opts.SenderID, envelopeFrom, remote, raw); err != nil {
+			return nil, err
 		}
 		result.RemoteUsers = len(remote)
 	}
 
 	return result, nil
+}
+
+// SendRemote hands a message to the configured outbound path. In direct mode it
+// is queued for delivery to the recipient's own MX, so no [mailer] transport is
+// needed; in relay mode it goes to the [mailer] transport as before.
+func SendRemote(ctx context.Context, senderID int64, envelopeFrom string, recipients []string, raw []byte) error {
+	if setting.MailboxServer.OutboundMode == setting.OutboundModeDirect {
+		if err := QueueOutbound(ctx, senderID, envelopeFrom, recipients, raw); err != nil {
+			return fmt.Errorf("queue external mail: %w", err)
+		}
+		return nil
+	}
+	if setting.MailService == nil {
+		return errors.New("cannot relay external mail: OUTBOUND_MODE is relay but [mailer] is not enabled")
+	}
+	var relay sender_service.Sender
+	switch setting.MailService.Protocol {
+	case "sendmail":
+		relay = &sender_service.SendmailSender{}
+	case "dummy":
+		relay = &sender_service.DummySender{}
+	default:
+		relay = &sender_service.SMTPSender{}
+	}
+	if err := relay.Send(envelopeFrom, recipients, rawMessage(raw)); err != nil {
+		return fmt.Errorf("relay external mail: %w", err)
+	}
+	return nil
 }
 
 func StoreRaw(ctx context.Context, user *user_model.User, folder string, raw []byte, seen bool) (*mailbox_model.Message, error) {
@@ -539,7 +558,7 @@ func ComposeAndSend(ctx context.Context, user *user_model.User, to, cc, bcc []st
 	if err != nil {
 		return nil, fmt.Errorf("sign outgoing message with DKIM: %w", err)
 	}
-	result, err := DeliverRaw(ctx, from, allRecipients, raw, true)
+	result, err := DeliverRawWithOptions(ctx, from, allRecipients, raw, DeliveryOptions{AllowRelay: true, SenderID: user.ID})
 	if err != nil {
 		return nil, err
 	}

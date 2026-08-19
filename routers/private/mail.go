@@ -12,7 +12,6 @@ import (
 	user_model "gitea.dev/models/user"
 	"gitea.dev/modules/json"
 	"gitea.dev/modules/private"
-	"gitea.dev/modules/setting"
 	"gitea.dev/services/context"
 	"gitea.dev/services/mailer"
 	sender_service "gitea.dev/services/mailer/sender"
@@ -22,8 +21,10 @@ import (
 //
 // It doesn't wait before each message will be processed
 func SendEmail(ctx *context.PrivateContext) {
-	if setting.MailService == nil {
-		ctx.PrivateInternalErrorf("Mail service is not enabled.")
+	if !mailer.MailEnabled() {
+		ctx.JSON(http.StatusInternalServerError, private.Response{
+			Err: "Mail service is not enabled.",
+		})
 		return
 	}
 

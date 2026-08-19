@@ -62,3 +62,14 @@ func TestNewUIDValidity(t *testing.T) {
 		assert.NotZero(t, newUIDValidity())
 	}
 }
+
+func TestOutboundRecipientRoundTrip(t *testing.T) {
+	out := &Outbound{}
+	assert.Nil(t, out.RecipientList())
+
+	out.SetRecipients([]string{"a@example.com", "b@example.com"})
+	assert.Equal(t, []string{"a@example.com", "b@example.com"}, out.RecipientList())
+
+	out.SetRecipients(nil)
+	assert.Nil(t, out.RecipientList())
+}

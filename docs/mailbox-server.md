@@ -19,6 +19,14 @@ TLS_CERT_FILE = /etc/gitea/mail/fullchain.pem
 TLS_KEY_FILE = /etc/gitea/mail/privkey.pem
 ALLOW_INSECURE_AUTH = false
 RELAY_ENABLED = true
+
+# Remote delivery. "direct" needs no [mailer] at all.
+OUTBOUND_MODE = direct
+OUTBOUND_HELO = mail.git.example.com
+OUTBOUND_REQUIRE_TLS = false
+OUTBOUND_RETRY_MAX_AGE = 72h
+OUTBOUND_RETRY_EVERY = 5m
+OUTBOUND_CONCURRENCY = 4
 MAX_MESSAGE_SIZE = 26214400
 MAX_RECIPIENTS = 100
 DEFAULT_QUOTA = 0
@@ -105,9 +113,30 @@ _dmarc.git.example.com. TXT "v=DMARC1; p=reject; adkim=r; aspf=r; pct=100"
 
 The exact SPF policy must describe the systems that really emit mail for your domain. If `[mailer]` relays through a separate provider, that provider must be represented in SPF as appropriate. Configure PTR/rDNS for the SMTP egress host as well.
 
+## Outbound delivery
+
+`OUTBOUND_MODE` decides how mail for remote domains leaves the instance.
+
+With `direct` (the default) the server is a complete MTA and `[mailer]` is not required at all. Remote recipients are grouped by destination domain and queued in `mailbox_outbound`, then delivered by a background worker that:
+
+- resolves the domain's MX records and tries them in preference order, falling back to the domain's A/AAAA record when it publishes no MX (RFC 5321 5.1) and refusing a null MX (RFC 7505);
+- upgrades the connection with STARTTLS when the peer offers it. Certificates are *not* verified by default, because MX hosts routinely present names that do not match the record used to reach them; this is the opportunistic model of RFC 7435, and encryption without authentication is still better than cleartext. Set `OUTBOUND_REQUIRE_TLS = true` to demand a verified chain and refuse to deliver without one;
+- treats a 5xx reply as permanent and a 4xx reply, a DNS temporary failure or a dropped connection as a deferral;
+- retries deferrals with a widening backoff (5m, 15m, 30m, then hourly) until `OUTBOUND_RETRY_MAX_AGE`, after which the message is given up on.
+
+When a message is given up on, a delivery status notice is filed into the sender's own mailbox, which stands in for the bounce an edge MTA would normally return. Mail this instance did not originate has no local sender to notify and is only logged.
+
+Queue rows are leased before they are handed to a worker, so overlapping runs — or a second Gitea instance on the same database — cannot deliver the same message twice.
+
+With `relay`, remote recipients are handed to the `[mailer]` transport instead. Use it behind a smarthost, or when the host cannot open outbound port 25, which many cloud providers and every residential ISP block.
+
+Direct mode requires the operator to look like a legitimate sender: a static egress IP with forward-confirmed reverse DNS matching `OUTBOUND_HELO`, an SPF record covering that IP, and DKIM signing enabled. Without those, large providers will reject or spam-file the mail regardless of how correct the SMTP conversation is.
+
 ## Existing Gitea mail integration
 
-When `[mailer]` is enabled, Gitea-generated messages are partitioned before sending. Recipients hosted by `[mailbox] DOMAIN` are written directly to their local mailbox; other recipients continue through the configured Gitea mailer transport. DKIM signing happens before this partition, so the same signed RFC 5322 message is used for both local and remote copies.
+Gitea-generated messages are partitioned before sending. Recipients hosted by `[mailbox] DOMAIN` are written directly to their local mailbox; other recipients follow `OUTBOUND_MODE`. DKIM signing happens before this partition, so the same signed RFC 5322 message is used for both local and remote copies.
+
+Because the integrated server can carry Gitea's own notifications, `[mailer]` may be omitted entirely: password resets, registration confirmations, team invites and notification mail all work with `[mailbox]` alone.
 
 When `[email.incoming] LOCAL_DELIVERY = true`, tokenized reply-by-email addresses are consumed directly by the integrated SMTP listener. The existing incoming-mail token decoder and issue/pull-request handlers are reused; the external IMAP polling loop is disabled.
 
@@ -143,4 +172,4 @@ Gitea supplies only the parts that are specific to it: the session backends, rec
 
 The integrated server covers the mailbox-facing SMTP path (local recipient validation, authenticated relay and null reverse paths) and an IMAP4 server backed by the same database storage. HTML mail is sanitized before rendering in the authenticated web UI.
 
-Remote-domain outbound delivery deliberately uses the existing `[mailer]` transport rather than implementing DNS MX resolution, an outbound retry queue, bounce processing, reputation/greylisting, antivirus or content-spam filtering. DKIM signing plus inbound DKIM/SPF/DMARC authentication are native, but a production Internet mail deployment still needs correct DNS, abuse controls and any desired spam/virus filtering at the deployment boundary.
+MX resolution, opportunistic TLS, deferral retries and delivery status notices are native. Not implemented: full RFC 3464 DSN bodies (the notice is a plain-text message), inbound greylisting, reputation scoring, antivirus and content-spam filtering. A production Internet deployment still needs correct DNS, abuse controls and any desired spam/virus filtering at the boundary.

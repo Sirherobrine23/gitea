@@ -50,7 +50,7 @@ func sendUserMail(language string, u *user_model.User, tpl templates.TplName, co
 
 // SendActivateAccountMail sends an activation mail to the user (new user registration)
 func SendActivateAccountMail(locale translation.Locale, u *user_model.User) {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return
 	}
@@ -60,7 +60,7 @@ func SendActivateAccountMail(locale translation.Locale, u *user_model.User) {
 
 // SendResetPasswordMail sends a password reset mail to the user
 func SendResetPasswordMail(u *user_model.User) {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return
 	}
@@ -71,7 +71,7 @@ func SendResetPasswordMail(u *user_model.User) {
 
 // SendActivateEmailMail sends confirmation email to confirm new email address
 func SendActivateEmailMail(u *user_model.User, email string) {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return
 	}
@@ -101,7 +101,7 @@ func SendActivateEmailMail(u *user_model.User, email string) {
 
 // SendRegisterNotifyMail triggers a notify e-mail by admin created a account.
 func SendRegisterNotifyMail(u *user_model.User) {
-	if setting.MailService == nil || !u.IsActive {
+	if !MailEnabled() || !u.IsActive {
 		// No mail service configured OR user is inactive
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 
+	"gitea.dev/modules/log"
 	"gitea.dev/modules/setting"
 )
 
@@ -62,6 +63,10 @@ func Init(ctx context.Context) error {
 	}
 	if err := initIMAP(ctx, tlsConfig); err != nil {
 		return err
+	}
+	if setting.MailboxServer.OutboundMode == setting.OutboundModeDirect {
+		log.Info("Mailbox outbound delivery is direct-to-MX; [mailer] is not required")
+		go RunOutboundQueue(ctx)
 	}
 	return nil
 }

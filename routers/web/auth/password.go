@@ -33,7 +33,7 @@ var (
 func ForgotPasswd(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.forgot_password_title")
 
-	if setting.MailService == nil {
+	if !mailer.MailEnabled() {
 		log.Warn("no mail service configured")
 		ctx.Data["IsResetDisable"] = true
 		ctx.HTML(http.StatusOK, tplForgotPassword)
@@ -50,7 +50,7 @@ func ForgotPasswd(ctx *context.Context) {
 func ForgotPasswdPost(ctx *context.Context) {
 	ctx.Data["Title"] = ctx.Tr("auth.forgot_password_title")
 
-	if setting.MailService == nil {
+	if !mailer.MailEnabled() {
 		ctx.NotFound(nil)
 		return
 	}

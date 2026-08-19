@@ -203,6 +203,9 @@ func (s *smtpSession) Data(r io.Reader) error {
 	remote := remoteIP(s.remoteAddr())
 	_, tlsActive := s.conn.TLSConnectionState()
 	deliveryOptions := DeliveryOptions{AllowRelay: s.user != nil && setting.MailboxServer.RelayEnabled}
+	if s.user != nil {
+		deliveryOptions.SenderID = s.user.ID
+	}
 
 	if s.user == nil {
 		auth := authenticateIncoming(s.ctx, remote, s.conn.Hostname(), s.mailFrom, raw)

@@ -30,7 +30,7 @@ func generateMessageIDForRelease(release *repo_model.Release) string {
 
 // MailNewRelease send new release notify to all repo watchers.
 func MailNewRelease(ctx context.Context, rel *repo_model.Release) {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return
 	}

@@ -39,7 +39,7 @@ func LoadedTemplates() *templates.MailRender {
 
 // SendTestMail sends a test mail
 func SendTestMail(email string) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return nil
 	}

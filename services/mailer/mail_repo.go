@@ -25,7 +25,7 @@ const (
 
 // SendRepoTransferNotifyMail triggers a notification e-mail when a pending repository transfer was created
 func SendRepoTransferNotifyMail(ctx context.Context, doer, newOwner *user_model.User, repo *repo_model.Repository) error {
-	if setting.MailService == nil {
+	if !MailEnabled() {
 		// No mail service configured
 		return nil
 	}
@@ -98,7 +98,7 @@ func sendRepoTransferNotifyMailPerLang(lang string, newOwner, doer *user_model.U
 
 // SendCollaboratorMail sends mail notification to new collaborator.
 func SendCollaboratorMail(u, doer *user_model.User, repo *repo_model.Repository) {
-	if setting.MailService == nil || !u.IsActive {
+	if !MailEnabled() || !u.IsActive {
 		return
 	}
 	locale := translation.NewLocale(u.Language)
