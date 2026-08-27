@@ -4,3 +4,6 @@ ignoreScripts: true
 minimumReleaseAge: 0
 confirmModulesPurge: false
 verifyDepsBeforeRun: false
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true

@@ -3,6 +3,10 @@ import {showErrorToast} from '../modules/toast.ts';
 
 const preventListener = (e: Event) => e.preventDefault();
 
+// Track checkboxes that already have input listeners. WeakSet survives
+// Idiomorph morphs (which strip the JS-added data-editable attribute).
+const initializedCheckboxes = new WeakSet<HTMLInputElement>();
+
 /**
  * Toggle a task list checkbox in markdown content.
  * `position` is the byte offset of the space or `x` character inside `[ ]`.
@@ -34,11 +38,10 @@ export function initMarkupTasklist(elMarkup: HTMLElement): void {
   const checkboxes = elMarkup.querySelectorAll<HTMLInputElement>(`.task-list-item input[type=checkbox]`);
 
   for (const checkbox of checkboxes) {
-    if (checkbox.hasAttribute('data-editable')) {
-      return;
-    }
+    if (initializedCheckboxes.has(checkbox)) continue;
 
-    checkbox.setAttribute('data-editable', 'true');
+    initializedCheckboxes.add(checkbox);
+    checkbox.disabled = false;
     checkbox.addEventListener('input', async () => {
       const position = parseInt(checkbox.getAttribute('data-source-position')!) + 1;
 
@@ -91,10 +94,5 @@ export function initMarkupTasklist(elMarkup: HTMLElement): void {
         checkbox.removeEventListener('click', preventListener);
       }
     });
-
-    // Enable the checkboxes as they are initially disabled by the markdown renderer
-    for (const checkbox of checkboxes) {
-      checkbox.disabled = false;
-    }
   }
 }

@@ -2,6 +2,7 @@ import {Idiomorph} from 'idiomorph';
 import {errorMessage} from '../modules/errors.ts';
 import {request} from '../modules/fetch.ts';
 import {showErrorToast} from '../modules/toast.ts';
+import {initMarkupTasklist} from '../markup/tasklist.ts';
 import {
   IssueLiveSharedWorker,
   type IssueLiveClientMessage,
@@ -30,6 +31,7 @@ type MorphOptionsWithCallbacks = {
   morphStyle: 'innerHTML' | 'outerHTML',
   callbacks: {
     beforeNodeMorphed: (oldNode: Node, newNode: Node) => boolean,
+    beforeNodeRemoved?: (oldNode: Node) => boolean,
   },
 };
 
@@ -198,6 +200,9 @@ function morphElement(existing: HTMLElement, incoming: HTMLElement) {
       // Fomantic stores module state and handlers on these nodes. Preserve
       // their identity; global observers initialize newly inserted controls.
       beforeNodeMorphed: (oldNode: Node) => !(oldNode instanceof HTMLElement && oldNode.matches('.comment-header-right, .ui.dropdown')),
+      // .content-history-menu is created client-side (not in server HTML), so
+      // Idiomorph would remove it during the cleanup pass. Prevent removal.
+      beforeNodeRemoved: (oldNode: Node) => !(oldNode instanceof HTMLElement && oldNode.matches('.content-history-menu')),
     },
   };
   Idiomorph.morph(existing, incoming, options);
@@ -225,9 +230,34 @@ function morphCommentEntry(existing: HTMLElement, incoming: HTMLElement) {
   const incomingHeaderLeft = incoming.querySelector<HTMLElement>('.comment-header-left');
   if (existingHeaderLeft && incomingHeaderLeft) morphElement(existingHeaderLeft, incomingHeaderLeft);
 
+  // Save the current content_version before morph — a live update from an older
+  // edit can arrive after a newer POST response, overwriting the version.
+  const existingEditZone = existing.querySelector<HTMLElement>('.edit-content-zone');
+  const savedVersion = existingEditZone?.getAttribute('data-content-version');
+
   const existingBody = existing.querySelector<HTMLElement>('.comment-body');
   const incomingBody = incoming.querySelector<HTMLElement>('.comment-body');
   if (existingBody && incomingBody) morphElement(existingBody, incomingBody);
+
+  // Restore the newer content_version if the morph overwrote it with an older one.
+  if (existingEditZone && savedVersion) {
+    const morphedVersion = existingEditZone.getAttribute('data-content-version');
+    if (!morphedVersion || Number(morphedVersion) < Number(savedVersion)) {
+      existingEditZone.setAttribute('data-content-version', savedVersion);
+    }
+  }
+
+  // Idiomorph mutates the .comment-body node in place (soft-match), so the
+  // MutationObserver never sees it in addedNodes and markup initializers
+  // (task-list checkboxes, code-copy, mermaid, math) are not re-run.
+  // Re-initialize explicitly on the morphed subtree. Also re-enable checkboxes
+  // because Idiomorph copies the server-rendered disabled="" attribute back.
+  for (const markup of existing.querySelectorAll<HTMLElement>('.render-content.markup')) {
+    initMarkupTasklist(markup);
+    for (const cb of markup.querySelectorAll<HTMLInputElement>('.task-list-item input[type=checkbox]')) {
+      cb.disabled = false;
+    }
+  }
 
   syncBottomReactions(existing, incoming);
 }
