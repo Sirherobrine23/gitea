@@ -76,8 +76,7 @@ func List(ctx *context.Context) {
 		ctx.ServerError("ListMessages", err)
 		return
 	}
-	pager := context.NewPagination(total, pageSize, page, 5)
-	pager.AddParamFromRequest(ctx.Req)
+	pager := context.NewPagerBuilder(ctx).TotalCount(total).PerPageLimit(pageSize).CurPage(page).NavPageNum(5).Build()
 	ctx.Data["Messages"] = messages
 	ctx.Data["MailboxFolder"] = folder
 	ctx.Data["MailboxQuery"] = ctx.FormString("q")

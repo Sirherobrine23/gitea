@@ -15,10 +15,10 @@
 						<input type="hidden" name="action" value="delete">
 						<button class="ui basic button" type="submit">{{svg "octicon-trash"}} {{ctx.Locale.Tr "mailbox.delete"}}</button>
 					</form>
-					<form class="ui form" method="post" action="{{AppSubUrl}}/mail/{{.Message.ID}}/action">
+					<form class="ui form ignore-dirty" method="post" action="{{AppSubUrl}}/mail/{{.Message.ID}}/action" data-global-init="initMailboxMoveForm">
 						<input type="hidden" name="action" value="move">
 						<div class="inline field tw-m-0">
-							<select name="folder" class="ui dropdown" onchange="this.form.submit()">
+							<select name="folder" class="ui selection dropdown">
 								<option value="">{{ctx.Locale.Tr "mailbox.move_to"}}</option>
 								{{range .MailboxFolders}}{{if ne .Name $.Message.Folder}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
 							</select>
@@ -47,7 +47,7 @@
 						<h4>{{ctx.Locale.Tr "mailbox.attachments"}}</h4>
 						<div class="ui list">
 						{{range .Attachments}}
-							<a class="item" href="{{AppSubUrl}}/mail/{{$.Message.ID}}/attachment/{{.ID}}">{{svg "octicon-paperclip"}} {{.Filename}} <span class="muted">({{FileSize .Size}})</span></a>
+							<a class="item" href="{{AppSubUrl}}/mail/{{$.Message.ID}}/attachment/{{.ID}}">{{svg "octicon-paperclip"}} {{.Filename}} <span class="muted">({{FormatByteSize .Size}})</span></a>
 						{{end}}
 						</div>
 					{{end}}
