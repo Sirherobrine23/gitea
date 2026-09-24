@@ -113,6 +113,7 @@ require (
 	gopkg.in/ini.v1 v1.67.3
 	modernc.org/sqlite v1.58.0
 	mvdan.cc/xurls/v2 v2.6.0
+	sirherobrine23.com.br/Sirherobrine23/whois v0.1.0
 	xorm.io/builder v0.3.13
 	xorm.io/xorm v1.4.1
 )

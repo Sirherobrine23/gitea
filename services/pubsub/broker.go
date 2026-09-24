@@ -37,3 +37,8 @@ var DefaultBroker Broker = NewMemoryBroker()
 func UserTopic(userID int64) string {
 	return fmt.Sprintf("user-%d", userID)
 }
+
+// IssueTopic carries timeline invalidations of one issue or pull request.
+func IssueTopic(repoID, index int64) string {
+	return fmt.Sprintf("issue-live-%d-%d", repoID, index)
+}

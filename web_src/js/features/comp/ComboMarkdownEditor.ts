@@ -207,6 +207,14 @@ export class ComboMarkdownEditor {
     this.attachedDropzoneInst.emit(DropzoneCustomEventReloadFiles);
   }
 
+  // for forms which stay on the page after submitting new content (no attachment list url to reload from)
+  dropzoneSubmitClear() {
+    if (!this.attachedDropzoneInst) return;
+    this.attachedDropzoneInst.emit('submit'); // mark files as submitted so that removing them doesn't delete them on server
+    this.attachedDropzoneInst.removeAllFiles(true);
+    this.dropzone!.querySelector('.files')!.replaceChildren();
+  }
+
   isUploading() {
     if (!this.attachedDropzoneInst) return false;
     return Boolean(this.attachedDropzoneInst.getQueuedFiles().length || this.attachedDropzoneInst.getUploadingFiles().length);

@@ -1,4 +1,3 @@
-import {Idiomorph} from 'idiomorph';
 import {errorMessage} from '../modules/errors.ts';
 import {request} from '../modules/fetch.ts';
 import {showErrorToast} from '../modules/toast.ts';
@@ -10,6 +9,7 @@ import {
   type IssueLiveWorkerEvent,
 } from '../modules/issue-live-worker.ts';
 import {getComboMarkdownEditor} from './comp/ComboMarkdownEditor.ts';
+import {triggerUploadStateChanged} from './comp/EditorUpload.ts';
 import {issueLiveRefreshEvent} from './comp/ReactionSelector.ts';
 
 const timelineItemIdPattern = /^(?:issue|pull)(?:comment)?-\d+$/;
@@ -26,13 +26,6 @@ type TimelineEntry = {
   element: HTMLElement,
 };
 
-type MorphOptionsWithCallbacks = {
-  morphStyle: 'innerHTML' | 'outerHTML',
-  callbacks: {
-    beforeNodeMorphed: (oldNode: Node, newNode: Node) => boolean,
-  },
-};
-
 function issueLiveUrl() {
   const path = window.location.pathname.replace(/\/+$/, '');
   const url = new URL(`${path}/live`, window.location.origin);
@@ -46,10 +39,10 @@ function ensureConnectionIndicator() {
 
   indicator = document.createElement('span');
   indicator.id = 'issue-live-connection-status';
-  indicator.className = 'tw-float-right tw-p-1 tw-text-xs tw-text-text-light';
+  indicator.className = 'tw-block tw-text-right tw-p-1 tw-text-xs';
   indicator.setAttribute('role', 'status');
   indicator.setAttribute('aria-live', 'polite');
-  document.querySelector('#timeline-comments-end')?.before(indicator);
+  document.querySelector('#timeline-comments-end')?.closest('.comment-list')?.after(indicator); // keep it out of the timeline entries
   return indicator;
 }
 
@@ -190,54 +183,52 @@ function queuePendingOperation(operation: IssueLiveOperation) {
   pendingOperations.set(operation.key, operation);
 }
 
-function morphElement(existing: HTMLElement, incoming: HTMLElement) {
-  if (existing.outerHTML === incoming.outerHTML) return;
-  const options: MorphOptionsWithCallbacks = {
-    morphStyle: 'outerHTML',
-    callbacks: {
-      // Fomantic stores module state and handlers on these nodes. Preserve
-      // their identity; global observers initialize newly inserted controls.
-      beforeNodeMorphed: (oldNode: Node) => !(oldNode instanceof HTMLElement && oldNode.matches('.comment-header-right, .ui.dropdown')),
-    },
-  };
-  Idiomorph.morph(existing, incoming, options);
+// Rendered markup is decorated by the frontend (mermaid, math, code copy, task lists), so a changed
+// part is replaced instead of morphed: the global observers only initialize newly inserted elements.
+const commentEntryParts = [
+  '.comment-header-left',
+  ':scope > .content.comment-container > .comment-body',
+  ':scope > .content.comment-container > .bottom-reactions',
+] as const;
+const appliedServerParts = new WeakMap<HTMLElement, (string | null)[]>();
+
+function commentPartsHtml(element: HTMLElement) {
+  return commentEntryParts.map((selector) => element.querySelector(selector)?.outerHTML ?? null);
 }
 
-function syncBottomReactions(existing: HTMLElement, incoming: HTMLElement) {
-  const existingContainer = existing.querySelector<HTMLElement>(':scope > .content.comment-container');
-  const incomingContainer = incoming.querySelector<HTMLElement>(':scope > .content.comment-container');
-  if (!existingContainer || !incomingContainer) return;
-
-  const existingReactions = existingContainer.querySelector<HTMLElement>(':scope > .bottom-reactions');
-  const incomingReactions = incomingContainer.querySelector<HTMLElement>(':scope > .bottom-reactions');
-
-  if (existingReactions && incomingReactions) {
-    existingReactions.replaceWith(incomingReactions);
-  } else if (existingReactions) {
-    existingReactions.remove();
-  } else if (incomingReactions) {
-    existingContainer.append(incomingReactions);
+function updateCommentEntry(existing: HTMLElement, incoming: HTMLElement) {
+  const container = existing.querySelector<HTMLElement>(':scope > .content.comment-container');
+  if (!container) return false;
+  const applied = appliedServerParts.get(existing);
+  const incomingParts = commentPartsHtml(incoming);
+  for (const [index, selector] of commentEntryParts.entries()) {
+    if (applied?.[index] === incomingParts[index]) continue;
+    const existingPart = existing.querySelector<HTMLElement>(selector);
+    const incomingPart = incoming.querySelector<HTMLElement>(selector);
+    if (existingPart && incomingPart) {
+      existingPart.replaceWith(incomingPart);
+    } else if (existingPart) {
+      existingPart.remove();
+    } else if (incomingPart) {
+      container.append(incomingPart);
+    }
   }
+  appliedServerParts.set(existing, incomingParts);
+  return true;
 }
 
-function morphCommentEntry(existing: HTMLElement, incoming: HTMLElement) {
-  const existingHeaderLeft = existing.querySelector<HTMLElement>('.comment-header-left');
-  const incomingHeaderLeft = incoming.querySelector<HTMLElement>('.comment-header-left');
-  if (existingHeaderLeft && incomingHeaderLeft) morphElement(existingHeaderLeft, incomingHeaderLeft);
-
-  const existingBody = existing.querySelector<HTMLElement>('.comment-body');
-  const incomingBody = incoming.querySelector<HTMLElement>('.comment-body');
-  if (existingBody && incomingBody) morphElement(existingBody, incomingBody);
-
-  syncBottomReactions(existing, incoming);
-}
-
-function morphTimelineEntry(existing: HTMLElement, incoming: HTMLElement) {
-  if (existing.matches('.timeline-item.comment') && incoming.matches('.timeline-item.comment')) {
-    morphCommentEntry(existing, incoming);
-    return;
+// returns the element which represents the entry in the document afterwards
+function updateTimelineEntry(existing: HTMLElement, incoming: HTMLElement) {
+  if (existing.matches('.timeline-item.comment') && incoming.matches('.timeline-item.comment') && updateCommentEntry(existing, incoming)) {
+    return existing;
   }
-  morphElement(existing, incoming);
+  existing.replaceWith(incoming);
+  return incoming;
+}
+
+function insertTimelineEntry(incoming: HTMLElement, timelineEnd: HTMLElement) {
+  if (incoming.matches('.timeline-item.comment')) appliedServerParts.set(incoming, commentPartsHtml(incoming));
+  timelineEnd.before(incoming);
 }
 
 function positionTimelineEntry(
@@ -296,9 +287,9 @@ function applyTimelineOperations(operations: IssueLiveOperation[]) {
         queuePendingOperation(operation);
         continue;
       }
-      morphTimelineEntry(existing, incoming);
+      currentByKey.set(operation.key, updateTimelineEntry(existing, incoming));
     } else {
-      timelineEnd.before(incoming);
+      insertTimelineEntry(incoming, timelineEnd);
       currentByKey.set(operation.key, incoming);
       animateInsertedEntry(incoming);
     }
@@ -396,10 +387,12 @@ function initLiveCommentSubmit(worker: IssueLiveSharedWorker) {
 
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (form.classList.contains('is-loading')) return; // quick-submit can fire again while the request is pending
 
     const formData = new FormData(form);
     if (submitter?.name) formData.append(submitter.name, submitter.value);
 
+    const editor = getComboMarkdownEditor(form.querySelector('.combo-markdown-editor'));
     submitter?.setAttribute('disabled', '');
     form.classList.add('is-loading');
     try {
@@ -419,10 +412,12 @@ function initLiveCommentSubmit(worker: IssueLiveSharedWorker) {
         throw new Error(responseJson?.errorMessage || `Unable to create comment: ${response.statusText}`);
       }
 
-      const editor = getComboMarkdownEditor(form.querySelector('.combo-markdown-editor'));
-      editor?.value('');
-      editor?.textarea.dispatchEvent(new Event('input', {bubbles: true}));
-      editor?.dropzoneReloadFiles();
+      if (editor) {
+        editor.value('');
+        editor.textarea.dispatchEvent(new Event('input', {bubbles: true}));
+        // the page is not reloaded, so the submitted attachments must not be re-sent (and moved) by the next comment
+        editor.dropzoneSubmitClear();
+      }
       worker.refresh();
     } catch (error) {
       console.error(error);
@@ -430,6 +425,7 @@ function initLiveCommentSubmit(worker: IssueLiveSharedWorker) {
     } finally {
       submitter?.removeAttribute('disabled');
       form.classList.remove('is-loading');
+      if (editor) triggerUploadStateChanged(editor.container); // restore the buttons' state for the now empty editor
     }
   }, {capture: true});
 }
