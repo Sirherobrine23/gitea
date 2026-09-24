@@ -1310,7 +1310,7 @@ func registerWebRoutes(m *web.Router, webAuth *AuthMiddleware) {
 		m.Get("/posters", repo.IssuePullPosters)
 		m.Group("/{index}", func() {
 			m.Get("/info", repo.GetIssueInfo)
-			m.Get("/live", repo.IssueLive)
+			m.Get("/live", repo.SetEditorconfigIfExists, repo.IssueLive)
 			m.Get("/attachments", repo.GetIssueAttachments)
 			m.Get("/attachments/{uuid}", repo.GetAttachment)
 			m.Group("/content-history", func() {

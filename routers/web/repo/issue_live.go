@@ -150,6 +150,11 @@ func prepareIssueLiveSnapshot(ctx *context.Context) (string, error) {
 	}
 	if issue.IsPull {
 		ctx.Data["BaseTarget"] = issue.PullRequest.BaseBranch
+		canMarkConversation, err := issues_model.CanMarkConversation(ctx, issue, ctx.Doer)
+		if err != nil {
+			return "", err
+		}
+		ctx.Data["CanMarkConversation"] = canMarkConversation
 	}
 
 	prepareIssueViewCommentsAndSidebarParticipants(ctx, issue)

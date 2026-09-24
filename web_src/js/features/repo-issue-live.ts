@@ -10,6 +10,8 @@ import {
 } from '../modules/issue-live-worker.ts';
 import {getComboMarkdownEditor} from './comp/ComboMarkdownEditor.ts';
 import {triggerUploadStateChanged} from './comp/EditorUpload.ts';
+import {initRepoIssueContentHistory} from './repo-issue-content.ts';
+import {pullMergeBoxReloadEvent} from './repo-issue-pull.ts';
 import {issueLiveRefreshEvent} from './comp/ReactionSelector.ts';
 
 const timelineItemIdPattern = /^(?:issue|pull)(?:comment)?-\d+$/;
@@ -314,6 +316,12 @@ function applyTimelineOperations(operations: IssueLiveOperation[]) {
   if (scrollAnchor?.element.isConnected) {
     const offset = scrollAnchor.element.getBoundingClientRect().top - scrollAnchor.top;
     if (offset) window.scrollBy(0, offset);
+  }
+  // the "edited" menus are added by the frontend, so re-rendered comments lose them
+  if (positionOperations.length) {
+    initRepoIssueContentHistory();
+    // the merge state (merged, new commits, reviews) is shown outside of the timeline
+    document.querySelector('.pull-merge-box')?.dispatchEvent(new CustomEvent(pullMergeBoxReloadEvent));
   }
   updateSharedWorkerResumeState();
 }
